@@ -2,926 +2,980 @@
 
 // Hàm helper để xử lý lỗi với stack trace
 function handleError(errorMessage, error, context = {}, severity = 'low', options = {}) {
-    const errorDetails = {
-        message: `${errorMessage}: ${error?.message || "Unknown error"}`,
-        stack: error?.stack || "",
-        context,
-        severity,
-        timestamp: Date.now()
-    };
-    console[severity === 'high' ? 'error' : 'warn'](errorDetails.message, errorDetails);
+	const errorDetails = {
+		message: `${errorMessage}: ${error?.message || "Unknown error"}`,
+		stack: error?.stack || "",
+		context,
+		severity,
+		timestamp: Date.now()
+	};
+	console[severity === 'high' ? 'error' : 'warn'](errorDetails.message, errorDetails);
 
-    // Store error in MemoryManager
-    if (options.memoryManager) {
-        try {
-            let errorHistory = options.memoryManager.get('errorHistory') || [];
-            errorHistory.push(errorDetails);
-            errorHistory = errorHistory.slice(-50); // Keep last 50 errors
-            options.memoryManager.set('errorHistory', errorHistory, 'high');
-        } catch (storeError) {
-            console.warn('Failed to store error history:', storeError);
-        }
-    }
+	// Store error in MemoryManager
+	if (options.memoryManager) {
+		try {
+			let errorHistory = options.memoryManager.get('errorHistory') || [];
+			errorHistory.push(errorDetails);
+			errorHistory = errorHistory.slice(-50); // Keep last 50 errors
+			options.memoryManager.set('errorHistory', errorHistory, 'high');
+		} catch (storeError) {
+			console.warn('Failed to store error history:', storeError);
+		}
+	}
 
-    // Report to server if configured
-    if (options.reportToServer && severity === 'high') {
-        try {
-            fetch(options.reportToServer, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(errorDetails)
-            }).catch(fetchError => console.warn('Failed to report error to server:', fetchError));
-        } catch (fetchError) {
-            console.warn('Error initiating server report:', fetchError);
-        }
-    }
+	// Report to server if configured
+	if (options.reportToServer && severity === 'high') {
+		try {
+			fetch(options.reportToServer, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(errorDetails)
+			}).catch(fetchError => console.warn('Failed to report error to server:', fetchError));
+		} catch (fetchError) {
+			console.warn('Error initiating server report:', fetchError);
+		}
+	}
 }
 
 // Hàm cải tiến để đo CPU load chính xác hơn
+
 Jungle.prototype.getCPULoad = function() {
-    if (!this.context || !(this.context instanceof(window.AudioContext || window.webkitAudioContext))) {
-        console.warn('Invalid AudioContext, returning default CPU load');
-        return this.qualityMode === 'low' ? 0.3 : 0.7; // Dynamic fallback
-    }
+	if (!this.context || !(this.context instanceof(window.AudioContext || window.webkitAudioContext))) {
+		console.warn('Invalid AudioContext, returning default CPU load');
+		return this.qualityMode === 'low' ? 0.3 : 0.7; // Dynamic fallback
+	}
 
-    performance.mark('cpu-load-start');
-    const sampleRate = this.context.sampleRate || 44100;
-    const audioLatency = this.context.baseLatency || 0;
-    let latencyFactor = Math.min(audioLatency * 40, 0.25); // Reduced latency impact
+	performance.mark('cpu-load-start');
+	const sampleRate = this.context.sampleRate || 44100;
+	const audioLatency = this.context.baseLatency || 0;
+	let latencyFactor = Math.min(audioLatency * 40, 0.25); // Reduced latency impact
 
-    // Worker load
-    const workerLoad = this.worker && Number.isFinite(this.nextProcessingInterval) ?
-        Math.min(this.nextProcessingInterval / 2500, 0.15) :
-        0;
+	// Worker load
+	const workerLoad = this.worker && Number.isFinite(this.nextProcessingInterval) ?
+		Math.min(this.nextProcessingInterval / 2500, 0.15) :
+		0;
 
-    // Device load
-    const deviceLoad = navigator.hardwareConcurrency ?
-        Math.min(1 / (navigator.hardwareConcurrency * 1.5), 0.1) :
-        0.08;
+	// Device load
+	const deviceLoad = navigator.hardwareConcurrency ?
+		Math.min(1 / (navigator.hardwareConcurrency * 1.5), 0.1) :
+		0.08;
 
-    // Memory factor (if supported)
-    const memoryFactor = window.performance.memory ?
-        Math.min(window.performance.memory.usedJSHeapSize / window.performance.memory.jsHeapSizeLimit, 0.1) :
-        0;
+	// Memory factor (if supported)
+	const memoryFactor = window.performance.memory ?
+		Math.min(window.performance.memory.usedJSHeapSize / window.performance.memory.jsHeapSizeLimit, 0.1) :
+		0;
 
-    // WebGPU load (tích hợp từ audioWorker.js, kiểm tra an toàn)
-    let gpuLoad = 0;
-    if (this.webGPUDevice && this.devicePerf === 'high' && this.fftSize) {
-        gpuLoad = Math.min(0.2, this.webGPUDevice.limits?.maxComputeWorkgroupStorageSize / (this.fftSize * 4) || 0.1);
-    }
+	// WebGPU load (tích hợp từ audioWorker.js, kiểm tra an toàn)
+	let gpuLoad = 0;
+	if (this.webGPUDevice && this.devicePerf === 'high' && this.fftSize) {
+		gpuLoad = Math.min(0.2, this.webGPUDevice.limits?.maxComputeWorkgroupStorageSize / (this.fftSize * 4) || 0.1);
+	}
 
-    // Adjust latencyFactor based on spectralProfile
-    const spectralProfile = this.spectralProfile || {
-        profile: 'smartStudio',
-        bass: 0.5,
-        vocalPresence: 0.5,
-        spectralEntropy: 0.5,
-        harmonicRatio: 0.5
-    };
-    if (spectralProfile.profile === 'bassHeavy' || spectralProfile.bass > 0.7) {
-        latencyFactor = ensureFinite(latencyFactor * 1.1, 0.25, {
-            errorMessage: 'Invalid latencyFactor for bassHeavy'
-        }); // Bass chắc lan tỏa
-    } else if (spectralProfile.profile === 'vocal' || spectralProfile.vocalPresence > 0.7) {
-        latencyFactor = ensureFinite(latencyFactor * 0.9, 0.25, {
-            errorMessage: 'Invalid latencyFactor for vocal'
-        }); // Vocal mượt mà
-    } else if (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7) {
-        latencyFactor = ensureFinite(latencyFactor * 1.05, 0.25, {
-            errorMessage: 'Invalid latencyFactor for complex sound'
-        }); // Tối ưu cho âm thanh phức tạp
-    }
+	// Adjust latencyFactor based on spectralProfile
+	const spectralProfile = this.spectralProfile || {
+		profile: 'smartStudio',
+		bass: 0.5,
+		vocalPresence: 0.5
+	};
+	if (spectralProfile.profile === 'bassHeavy' || spectralProfile.bass > 0.7) {
+		latencyFactor = ensureFinite(latencyFactor * 1.1, 0.25, {
+			errorMessage: 'Invalid latencyFactor for bassHeavy'
+		}); // Bass chắc lan tỏa
+	} else if (spectralProfile.profile === 'vocal' || spectralProfile.vocalPresence > 0.7) {
+		latencyFactor = ensureFinite(latencyFactor * 0.9, 0.25, {
+			errorMessage: 'Invalid latencyFactor for vocal'
+		}); // Vocal mượt mà
+	}
 
-    performance.mark('cpu-load-end');
-    const measure = performance.measure('cpu-load', 'cpu-load-start', 'cpu-load-end');
-    const duration = ensureFinite(measure.duration, 0, {
-        errorMessage: 'Invalid performance duration'
-    });
+	performance.mark('cpu-load-end');
+	const measure = performance.measure('cpu-load', 'cpu-load-start', 'cpu-load-end');
+	const duration = ensureFinite(measure.duration, 0, {
+		errorMessage: 'Invalid performance duration'
+	});
 
-    let load = Math.min(
-        (duration / 12) * (sampleRate / 44100) + latencyFactor + workerLoad + deviceLoad + memoryFactor + gpuLoad,
-        1
-    );
+	let load = Math.min(
+		(duration / 12) * (sampleRate / 44100) + latencyFactor + workerLoad + deviceLoad + memoryFactor + gpuLoad,
+		1
+	);
 
-    // Manage load history
-    let loadHistory = [];
-    try {
-        const cachedHistory = this.memoryManager?.get('cpuLoadHistory') || [];
-        if (Array.isArray(cachedHistory)) {
-            loadHistory = cachedHistory;
-        }
-        const lastLoad = loadHistory[loadHistory.length - 1] || 0;
-        if (Math.abs(load - lastLoad) > 0.05) { // Only store significant changes
-            loadHistory.push(load);
-            loadHistory = loadHistory.slice(-10);
-            this.memoryManager?.set('cpuLoadHistory', loadHistory, 'high');
-        }
-    } catch (error) {
-        handleError('Error managing CPU load history', error, {
-            load,
-            sampleRate,
-            spectralProfile
-        }, 'low', {
-            memoryManager: this.memoryManager
-        });
-    }
+	// Manage load history
+	let loadHistory = [];
+	try {
+		const cachedHistory = this.memoryManager?.get('cpuLoadHistory') || [];
+		if (Array.isArray(cachedHistory)) {
+			loadHistory = cachedHistory;
+		}
+		const lastLoad = loadHistory[loadHistory.length - 1] || 0;
+		if (Math.abs(load - lastLoad) > 0.05) { // Only store significant changes
+			loadHistory.push(load);
+			loadHistory = loadHistory.slice(-10);
+			this.memoryManager?.set('cpuLoadHistory', loadHistory, 'high');
+		}
+	} catch (error) {
+		handleError('Error managing CPU load history', error, {
+			load,
+			sampleRate,
+			spectralProfile
+		}, 'low', {
+			memoryManager: this.memoryManager
+		});
+	}
 
-    const averageLoad = loadHistory.length > 0 ?
-        loadHistory.reduce((sum, val) => sum + val, 0) / loadHistory.length :
-        load;
+	const averageLoad = loadHistory.length > 0 ?
+		loadHistory.reduce((sum, val) => sum + val, 0) / loadHistory.length :
+		load;
 
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    if (isDebug) {
-        console.debug('CPU Load:', {
-            averageLoad,
-            duration,
-            audioLatency,
-            workerLoad,
-            deviceLoad,
-            memoryFactor,
-            gpuLoad,
-            sampleRate,
-            spectralProfile: spectralProfile.profile
-        });
-    }
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	if (isDebug) {
+		console.debug('CPU Load:', {
+			averageLoad,
+			duration,
+			audioLatency,
+			workerLoad,
+			deviceLoad,
+			memoryFactor,
+			gpuLoad,
+			sampleRate,
+			spectralProfile: spectralProfile.profile
+		});
+	}
 
-    return Number.isFinite(averageLoad) ? Math.max(0, Math.min(1, averageLoad)) : this.qualityMode === 'low' ? 0.3 : 0.7;
+	return Number.isFinite(averageLoad) ? Math.max(0, Math.min(1, averageLoad)) : this.qualityMode === 'low' ? 0.3 : 0.7;
 };
 
 function adjustFadeLength(fadeLength, sampleRate, spectralProfile, pitchShift, isVocal, cpuLoad, isLowPowerDevice, options = {}) {
-    // Kiểm tra đầu vào
-    if (!Number.isFinite(fadeLength) || fadeLength <= 0 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
-        handleError('Invalid fadeLength or sampleRate', new Error('Invalid input'), {
-            fadeLength,
-            sampleRate
-        }, 'low', options);
-        return 64;
-    }
+	// Kiểm tra đầu vào
+	if (!Number.isFinite(fadeLength) || fadeLength <= 0 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
+		handleError('Invalid fadeLength or sampleRate', new Error('Invalid input'), {
+			fadeLength,
+			sampleRate
+		}, 'low', options);
+		return 64;
+	}
 
-    // Hàm tính minFadeLength động
-    const calculateMinFadeLength = (absPitchShift, cpuLoad, isLowPowerDevice) => {
-        let baseLength = 512; // Mặc định 512 như đã cập nhật
-        if (absPitchShift > 0.5) baseLength = 512;
-        else if (absPitchShift > 0.2) baseLength = 384; // Trung gian giữa 256 và 512
-        if (cpuLoad > 0.95 || (isLowPowerDevice && cpuLoad > 0.9)) baseLength = Math.max(256, baseLength * 0.5);
-        return Math.round(baseLength);
-    };
+	// Hàm tính minFadeLength động
+	const calculateMinFadeLength = (absPitchShift, cpuLoad, isLowPowerDevice) => {
+		let baseLength = 512; // Mặc định 512 như đã cập nhật
+		if (absPitchShift > 0.5) baseLength = 512;
+		else if (absPitchShift > 0.2) baseLength = 384; // Trung gian giữa 256 và 512
+		if (cpuLoad > 0.95 || (isLowPowerDevice && cpuLoad > 0.9)) baseLength = Math.max(256, baseLength * 0.5);
+		return Math.round(baseLength);
+	};
 
-    const absPitchShift = ensureFinite(Math.abs(pitchShift || 0), 0, {
-        errorMessage: 'Invalid pitchShift'
-    });
-    const minFadeLength = calculateMinFadeLength(absPitchShift, cpuLoad, isLowPowerDevice);
+	const absPitchShift = ensureFinite(Math.abs(pitchShift || 0), 0, {
+		errorMessage: 'Invalid pitchShift'
+	});
+	const minFadeLength = calculateMinFadeLength(absPitchShift, cpuLoad, isLowPowerDevice);
 
-    // Chuẩn hóa spectralProfile
-    const spectralDefaults = {
-        spectralComplexity: 0.5,
-        transientEnergy: 0.5,
-        vocalPresence: 0.5,
-        bass: 0.5,
-        midHigh: 0.5,
-        air: 0.5,
-        spectralEntropy: 0.5
-    };
-    const validatedSpectralProfile = Object.keys(spectralDefaults).reduce((acc, key) => {
-        acc[key] = ensureFinite(spectralProfile?.[key], spectralDefaults[key], {
-            errorMessage: `Invalid spectralProfile.${key}`
-        });
-        return acc;
-    }, {
-        ...spectralDefaults
-    });
+	// Chuẩn hóa spectralProfile
+	const spectralDefaults = {
+		spectralComplexity: 0.5,
+		transientEnergy: 0.5,
+		vocalPresence: 0.5,
+		bass: 0.5,
+		midHigh: 0.5,
+		air: 0.5,
+		spectralEntropy: 0.5
+	};
+	const validatedSpectralProfile = Object.keys(spectralDefaults).reduce((acc, key) => {
+		acc[key] = ensureFinite(spectralProfile?.[key], spectralDefaults[key], {
+			errorMessage: `Invalid spectralProfile.${key}`
+		});
+		return acc;
+	}, {
+		...spectralDefaults
+	});
 
-    // Tùy chỉnh hệ số động theo qualityMode
-    const qualityFactor = options.qualityMode === 'low' ? 0.9 : 1.1;
-    const {
-        transientBoost = 1.3 * qualityFactor,
-        vocalBoost = 1.3 * qualityFactor,
-        bassBoost = 1.25 * qualityFactor,
-        midHighBoost = 1.2 * qualityFactor,
-        airReduction = 0.85 / qualityFactor,
-        highCpuReduction = 0.8 / qualityFactor,
-        memoryManager = null
-    } = options;
+	// Tùy chỉnh hệ số động theo qualityMode
+	const qualityFactor = options.qualityMode === 'low' ? 0.9 : 1.1;
+	const {
+		transientBoost = 1.3 * qualityFactor,
+			vocalBoost = 1.3 * qualityFactor,
+			bassBoost = 1.25 * qualityFactor,
+			midHighBoost = 1.2 * qualityFactor,
+			airReduction = 0.85 / qualityFactor,
+			highCpuReduction = 0.8 / qualityFactor,
+			memoryManager = null
+	} = options;
 
-    let adjustedLength = fadeLength;
+	let adjustedLength = fadeLength;
 
-    // Điều chỉnh cho transient và vocal, thêm logic để bass lan tỏa tự nhiên, vocal mượt
-    if (validatedSpectralProfile.transientEnergy > 0.7 || validatedSpectralProfile.vocalPresence > 0.7) {
-        adjustedLength *= isVocal ? vocalBoost * (validatedSpectralProfile.bass > 0.7 ? 1.1 : 1.0) : transientBoost * (validatedSpectralProfile.midHigh > 0.7 ? 1.05 : 1.0);
-    } else if (validatedSpectralProfile.transientEnergy > 0.5 || validatedSpectralProfile.vocalPresence > 0.5) {
-        adjustedLength *= isVocal ? vocalBoost * 0.9 : transientBoost * 0.9;
-    }
+	// Điều chỉnh cho transient và vocal, thêm logic để bass lan tỏa tự nhiên, vocal mượt
+	if (validatedSpectralProfile.transientEnergy > 0.7 || validatedSpectralProfile.vocalPresence > 0.7) {
+		adjustedLength *= isVocal ? vocalBoost * (validatedSpectralProfile.bass > 0.7 ? 1.1 : 1.0) : transientBoost * (validatedSpectralProfile.midHigh > 0.7 ? 1.05 : 1.0);
+	} else if (validatedSpectralProfile.transientEnergy > 0.5 || validatedSpectralProfile.vocalPresence > 0.5) {
+		adjustedLength *= isVocal ? vocalBoost * 0.9 : transientBoost * 0.9;
+	}
 
-    // Điều chỉnh cho bass, midHigh, và entropy, tự động tăng cho bass chắc, mid treb hài hòa
-    if (validatedSpectralProfile.bass > 0.7) adjustedLength *= bassBoost * (isLowPowerDevice ? 0.95 : 1.0); // Giảm nhẹ cho máy yếu
-    if (validatedSpectralProfile.midHigh > 0.7) adjustedLength *= midHighBoost * (validatedSpectralProfile.air > 0.7 ? 0.9 : 1.0); // Giảm nếu air cao để treb không chói
-    if (validatedSpectralProfile.spectralEntropy > 0.7) adjustedLength *= 1.15 * qualityFactor;
+	// Điều chỉnh cho bass, midHigh, và entropy, tự động tăng cho bass chắc, mid treb hài hòa
+	if (validatedSpectralProfile.bass > 0.7) adjustedLength *= bassBoost * (isLowPowerDevice ? 0.95 : 1.0); // Giảm nhẹ cho máy yếu
+	if (validatedSpectralProfile.midHigh > 0.7) adjustedLength *= midHighBoost * (validatedSpectralProfile.air > 0.7 ? 0.9 : 1.0); // Giảm nếu air cao để treb không chói
+	if (validatedSpectralProfile.spectralEntropy > 0.7) adjustedLength *= 1.15 * qualityFactor;
 
-    // Giảm nếu air cao và transient thấp, để giữ tự nhiên không giả
-    if (validatedSpectralProfile.air > 0.7 && validatedSpectralProfile.transientEnergy < 0.5) {
-        adjustedLength *= airReduction;
-    }
+	// Giảm nếu air cao và transient thấp, để giữ tự nhiên không giả
+	if (validatedSpectralProfile.air > 0.7 && validatedSpectralProfile.transientEnergy < 0.5) {
+		adjustedLength *= airReduction;
+	}
 
-    // Giảm khi CPU load cao, nhưng giữ min để chất lượng hay trên máy yếu
-    if (cpuLoad > 0.9 || (cpuLoad > 0.85 && isLowPowerDevice)) {
-        adjustedLength *= highCpuReduction * (validatedSpectralProfile.vocalPresence > 0.7 ? 1.05 : 1.0); // Giữ cao hơn cho vocal
-    }
+	// Giảm khi CPU load cao, nhưng giữ min để chất lượng hay trên máy yếu
+	if (cpuLoad > 0.9 || (cpuLoad > 0.85 && isLowPowerDevice)) {
+		adjustedLength *= highCpuReduction * (validatedSpectralProfile.vocalPresence > 0.7 ? 1.05 : 1.0); // Giữ cao hơn cho vocal
+	}
 
-    // Giới hạn fadeLength
-    adjustedLength = Math.max(minFadeLength, Math.round(adjustedLength));
-    const maxFadeLength = Math.round(sampleRate * 0.2); // Tăng lên 200ms
-    adjustedLength = Math.min(maxFadeLength, adjustedLength);
+	// Giới hạn fadeLength
+	adjustedLength = Math.max(minFadeLength, Math.round(adjustedLength));
+	const maxFadeLength = Math.round(sampleRate * 0.2); // Tăng lên 200ms
+	adjustedLength = Math.min(maxFadeLength, adjustedLength);
 
-    // Lưu lịch sử fadeLength
-    if (memoryManager) {
-        try {
-            let fadeLengthHistory = memoryManager.get('fadeLengthHistory') || [];
-            fadeLengthHistory.push({
-                length: adjustedLength,
-                timestamp: Date.now()
-            });
-            fadeLengthHistory = fadeLengthHistory.slice(-20); // Giữ 20 giá trị
-            memoryManager.set('fadeLengthHistory', fadeLengthHistory, 'normal');
-        } catch (error) {
-            handleError('Failed to store fadeLengthHistory', error, {
-                adjustedLength
-            }, 'low', {
-                memoryManager
-            });
-        }
-    }
+	// Lưu lịch sử fadeLength
+	if (memoryManager) {
+		try {
+			let fadeLengthHistory = memoryManager.get('fadeLengthHistory') || [];
+			fadeLengthHistory.push({
+				length: adjustedLength,
+				timestamp: Date.now()
+			});
+			fadeLengthHistory = fadeLengthHistory.slice(-20); // Giữ 20 giá trị
+			memoryManager.set('fadeLengthHistory', fadeLengthHistory, 'normal');
+		} catch (error) {
+			handleError('Failed to store fadeLengthHistory', error, {
+				adjustedLength
+			}, 'low', {
+				memoryManager
+			});
+		}
+	}
 
-    // Debug log
-    const isDebug = window.location.pathname.includes('debug') || window.location.search.includes('debug=true');
-    if (isDebug) {
-        console.debug(`Adjusted fadeLength: ${adjustedLength} samples`, samples);
-    }
+	// Debug log
+	const isDebug = window.location.pathname.includes('debug') || window.location.search.includes('debug=true');
+	if (isDebug) {
+		console.debug(`Adjusted fadeLength: ${adjustedLength} samples`, samples);
+	}
 
-    return adjustedLength;
+	return adjustedLength;
 }
 
 function getFadeBuffer(context, activeTime, fadeTime, options = {}, memoryManager) {
-    // Kiểm tra đầu vào
-    if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
-        handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
-            memoryManager
-        });
-        return null;
-    }
-    activeTime = ensureFinite(activeTime, 0.2, {
-        errorMessage: 'Invalid activeTime, using default: 0.2'
-    });
-    fadeTime = ensureFinite(fadeTime, 0.1, {
-        errorMessage: 'Invalid fadeTime, using default: 0.1'
-    });
-    if (!memoryManager || typeof memoryManager.getBuffer !== 'function') {
-        handleError('Invalid memoryManager', new Error('memoryManager is required'), {}, 'high', {
-            memoryManager
-        });
-        return null;
-    }
+	// Kiểm tra đầu vào
+	if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
+		handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
+			memoryManager
+		});
+		return null;
+	}
+	activeTime = ensureFinite(activeTime, 0.2, {
+		errorMessage: 'Invalid activeTime, using default: 0.2'
+	});
+	fadeTime = ensureFinite(fadeTime, 0.1, {
+		errorMessage: 'Invalid fadeTime, using default: 0.1'
+	});
+	if (!memoryManager || typeof memoryManager.getBuffer !== 'function') {
+		handleError('Invalid memoryManager', new Error('memoryManager is required'), {}, 'high', {
+			memoryManager
+		});
+		return null;
+	}
 
-    const {
-        pitchShift = 0,
-        isVocal = false,
-        qualityMode = 'high',
-        channels = 2, // Mặc định 2 kênh
-        spectralProfile = {}
-    } = options;
+	const {
+		pitchShift = 0,
+			isVocal = false,
+			qualityMode = 'high',
+			channels = 2, // Mặc định 2 kênh
+			spectralProfile = {}
+	} = options;
 
-    // Tạo key cache chi tiết
-    const spectralKey = `${ensureFinite(spectralProfile?.spectralComplexity, 0.5)}_${ensureFinite(spectralProfile?.vocalPresence, 0.5)}`;
-    const key = `fade_${activeTime}_${fadeTime}_${pitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
+	// Tạo key cache chi tiết
+	const spectralKey = `${ensureFinite(spectralProfile?.spectralComplexity, 0.5)}_${ensureFinite(spectralProfile?.vocalPresence, 0.5)}`;
+	const key = `fade_${activeTime}_${fadeTime}_${pitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
 
-    // Lấy buffer từ memoryManager
-    let buffer = memoryManager.getBuffer(key);
+	// Lấy buffer từ memoryManager
+	let buffer = memoryManager.getBuffer(key);
 
-    // Kiểm tra buffer hợp lệ và expiry
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    const expiryTime = 90000; // 90s
-    const bufferMetadata = memoryManager.get(key)?.metadata;
-    if (buffer && buffer instanceof AudioBuffer && buffer.length >= activeTime * context.sampleRate) {
-        if (bufferMetadata?.timestamp && Date.now() - bufferMetadata.timestamp > expiryTime) {
-            if (isDebug) console.debug(`Buffer expired for key: ${key}, recreating`);
-            buffer = null;
-        }
-    } else {
-        if (buffer) {
-            handleError('Invalid buffer', new Error('Buffer validation failed'), {
-                key,
-                bufferLength: buffer?.length
-            }, 'low', {
-                memoryManager
-            });
-        }
-        buffer = null;
-    }
+	// Kiểm tra buffer hợp lệ và expiry
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const expiryTime = 90000; // 90s
+	const bufferMetadata = memoryManager.get(key)?.metadata;
+	if (buffer && buffer instanceof AudioBuffer && buffer.length >= activeTime * context.sampleRate) {
+		if (bufferMetadata?.timestamp && Date.now() - bufferMetadata.timestamp > expiryTime) {
+			if (isDebug) console.debug(`Buffer expired for key: ${key}, recreating`);
+			buffer = null;
+		}
+	} else {
+		if (buffer) {
+			handleError('Invalid buffer', new Error('Buffer validation failed'), {
+				key,
+				bufferLength: buffer?.length
+			}, 'low', {
+				memoryManager
+			});
+		}
+		buffer = null;
+	}
 
-    // Tạo buffer mới nếu cần
-    if (!buffer) {
-        try {
-            buffer = createFadeBuffer(context, activeTime, fadeTime, options, memoryManager);
-            if (!buffer || !(buffer instanceof AudioBuffer)) {
-                throw new Error('Failed to create valid fade buffer');
-            }
-            memoryManager.set(key, buffer, 'high', {
-                metadata: {
-                    timestamp: Date.now()
-                }
-            });
-        } catch (error) {
-            handleError('Error creating fade buffer', error, {
-                key,
-                activeTime,
-                fadeTime,
-                options
-            }, 'high', {
-                memoryManager
-            });
-            return null;
-        }
-    }
+	// Tạo buffer mới nếu cần
+	if (!buffer) {
+		try {
+			buffer = createFadeBuffer(context, activeTime, fadeTime, options, memoryManager);
+			if (!buffer || !(buffer instanceof AudioBuffer)) {
+				throw new Error('Failed to create valid fade buffer');
+			}
+			memoryManager.set(key, buffer, 'high', {
+				metadata: {
+					timestamp: Date.now()
+				}
+			});
+		} catch (error) {
+			handleError('Error creating fade buffer', error, {
+				key,
+				activeTime,
+				fadeTime,
+				options
+			}, 'high', {
+				memoryManager
+			});
+			return null;
+		}
+	}
 
-    if (isDebug) {
-        console.debug(`Retrieved fade buffer for key: ${key}`, {
-            bufferLength: buffer.length,
-            channels: buffer.numberOfChannels,
-            sampleRate: buffer.sampleRate
-        });
-    }
+	if (isDebug) {
+		console.debug(`Retrieved fade buffer for key: ${key}`, {
+			bufferLength: buffer.length,
+			channels: buffer.numberOfChannels,
+			sampleRate: buffer.sampleRate
+		});
+	}
 
-    return buffer;
+	return buffer;
 }
 
 // Hàm tạo fade buffer với tối ưu hóa
 function createFadeBuffer(context, activeTime, fadeTime, options = {}, memoryManager) {
-    // Kiểm tra đầu vào
-    if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
-        handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
-            memoryManager
-        });
-        throw new Error("Invalid AudioContext provided.");
-    }
-    activeTime = ensureFinite(activeTime, 0.2, {
-        errorMessage: 'Invalid activeTime, using default: 0.2'
-    });
-    fadeTime = ensureFinite(fadeTime, 0.1, {
-        errorMessage: 'Invalid fadeTime, using default: 0.1'
-    });
+	// Kiểm tra đầu vào
+	if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
+		handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
+			memoryManager
+		});
+		throw new Error("Invalid AudioContext provided.");
+	}
+	activeTime = ensureFinite(activeTime, 0.2, {
+		errorMessage: 'Invalid activeTime, using default: 0.2'
+	});
+	fadeTime = ensureFinite(fadeTime, 0.1, {
+		errorMessage: 'Invalid fadeTime, using default: 0.1'
+	});
 
-    const {
-        smoothness = 1.1,
-        vibrance = 0.75,
-        pitchShift = 0,
-        isVocal = false,
-        spectralProfile = {},
-        qualityMode = 'high',
-        channels = 1,
-        transientBoost = 1.05,
-        vocalWarmth = 1.2
-    } = options;
+	const {
+		smoothness = 1.1,
+			vibrance = 0.75,
+			pitchShift = 0,
+			isVocal = false,
+			spectralProfile = {},
+			qualityMode = 'high',
+			channels = 1,
+			transientBoost = 1.05,
+			vocalWarmth = 1.2
+	} = options;
 
-    try {
-        const sampleRate = ensureFinite(context.sampleRate, 44100, {
-            errorMessage: 'Invalid sampleRate, using default: 44100'
-        });
-        if (sampleRate <= 0) {
-            throw new Error("sampleRate không hợp lệ: phải là số dương hữu hạn.");
-        }
+	try {
+		const sampleRate = ensureFinite(context.sampleRate, 44100, {
+			errorMessage: 'Invalid sampleRate, using default: 44100'
+		});
+		if (sampleRate <= 0) {
+			throw new Error("sampleRate không hợp lệ: phải là số dương hữu hạn.");
+		}
 
-        // Chuẩn hóa spectralProfile
-        const spectralDefaults = {
-            spectralComplexity: 0.5,
-            transientEnergy: 0.5,
-            vocalPresence: 0.5,
-            bass: 0.5,
-            midHigh: 0.5,
-            air: 0.5,
-            spectralEntropy: 0.5
-        };
-        const validatedSpectralProfile = Object.keys(spectralDefaults).reduce((acc, key) => {
-            acc[key] = ensureFinite(spectralProfile?.[key], spectralDefaults[key], {
-                errorMessage: `Invalid spectralProfile.${key}`
-            });
-            acc[key] = Math.max(0, Math.min(1, acc[key]));
-            return acc;
-        }, {
-            ...spectralDefaults
-        });
+		// Chuẩn hóa spectralProfile
+		const spectralDefaults = {
+			spectralComplexity: 0.5,
+			transientEnergy: 0.5,
+			vocalPresence: 0.5,
+			bass: 0.5,
+			midHigh: 0.5,
+			air: 0.5,
+			spectralEntropy: 0.5
+		};
+		const validatedSpectralProfile = Object.keys(spectralDefaults).reduce((acc, key) => {
+			acc[key] = ensureFinite(spectralProfile?.[key], spectralDefaults[key], {
+				errorMessage: `Invalid spectralProfile.${key}`
+			});
+			acc[key] = Math.max(0, Math.min(1, acc[key]));
+			return acc;
+		}, {
+			...spectralDefaults
+		});
 
-        // Lấy CPU load và thông tin thiết bị
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const loadHistory = memoryManager?.get('cpuLoadHistory') || [];
-        const avgCpuLoad = loadHistory.length > 0 ? loadHistory.reduce((sum, val) => sum + val, 0) / loadHistory.length : cpuLoad;
+		// Lấy CPU load và thông tin thiết bị
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const loadHistory = memoryManager?.get('cpuLoadHistory') || [];
+		const avgCpuLoad = loadHistory.length > 0 ? loadHistory.reduce((sum, val) => sum + val, 0) / loadHistory.length : cpuLoad;
 
-        // Xác định minFadeLength
-        let minFadeLength = 512;
-        if (avgCpuLoad > 0.95 || (isLowPowerDevice && qualityMode === 'low')) {
-            minFadeLength = 256;
-        } else if (Math.abs(pitchShift) > 0.5 || validatedSpectralProfile.transientEnergy > 0.7 || validatedSpectralProfile.vocalPresence > 0.7) {
-            minFadeLength = 512;
-        }
+		// Xác định minFadeLength
+		let minFadeLength = 512;
+		if (avgCpuLoad > 0.95 || (isLowPowerDevice && qualityMode === 'low')) {
+			minFadeLength = 256;
+		} else if (Math.abs(pitchShift) > 0.5 || validatedSpectralProfile.transientEnergy > 0.7 || validatedSpectralProfile.vocalPresence > 0.7) {
+			minFadeLength = 512;
+		}
 
-        // Điều chỉnh fadeLength
-        let fadeLength = Math.max(Math.round(fadeTime * sampleRate), minFadeLength);
-        fadeLength = adjustFadeLength(fadeLength, sampleRate, validatedSpectralProfile, pitchShift, isVocal, avgCpuLoad, isLowPowerDevice);
+		// Điều chỉnh fadeLength
+		let fadeLength = Math.max(Math.round(fadeTime * sampleRate), minFadeLength);
+		fadeLength = adjustFadeLength(fadeLength, sampleRate, validatedSpectralProfile, pitchShift, isVocal, avgCpuLoad, isLowPowerDevice);
 
-        // Tinh chỉnh fadeLength
-        if (validatedSpectralProfile.bass > 0.7 || validatedSpectralProfile.midHigh > 0.7 || validatedSpectralProfile.spectralEntropy > 0.7) {
-            fadeLength = Math.round(fadeLength * 1.1);
-        }
+		// Tinh chỉnh fadeLength
+		if (validatedSpectralProfile.bass > 0.7 || validatedSpectralProfile.midHigh > 0.7 || validatedSpectralProfile.spectralEntropy > 0.7) {
+			fadeLength = Math.round(fadeLength * 1.1);
+		}
 
-        const actualFadeTime = fadeLength / sampleRate;
-        const activeLength = Math.round(activeTime * sampleRate);
-        const totalLength = activeLength + Math.max(0, Math.round((activeTime - 2 * actualFadeTime) * sampleRate));
+		const actualFadeTime = fadeLength / sampleRate;
+		const activeLength = Math.round(activeTime * sampleRate);
+		const totalLength = activeLength + Math.max(0, Math.round((activeTime - 2 * actualFadeTime) * sampleRate));
 
-        // Tính bufferTimeFactor
-        let bufferTimeFactor = (qualityMode === 'high' && avgCpuLoad < 0.8 ? 1.5 : 1.0) *
-            (Math.abs(pitchShift) > 0.5 ? 1.15 : 1.0) *
-            (isLowPowerDevice || avgCpuLoad > 0.9 ? 0.75 : 1.0) *
-            (validatedSpectralProfile.transientEnergy > 0.7 ? transientBoost : 1.0) *
-            (validatedSpectralProfile.spectralEntropy > 0.7 ? 1.1 : 1.0);
+		// Tính bufferTimeFactor
+		let bufferTimeFactor = (qualityMode === 'high' && avgCpuLoad < 0.8 ? 1.5 : 1.0) *
+			(Math.abs(pitchShift) > 0.5 ? 1.15 : 1.0) *
+			(isLowPowerDevice || avgCpuLoad > 0.9 ? 0.75 : 1.0) *
+			(validatedSpectralProfile.transientEnergy > 0.7 ? transientBoost : 1.0) *
+			(validatedSpectralProfile.spectralEntropy > 0.7 ? 1.1 : 1.0);
 
-        const adjustedActiveTime = activeTime * bufferTimeFactor;
+		const adjustedActiveTime = activeTime * bufferTimeFactor;
 
-        // Debug log
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (fadeLength < 64) {
-            console.warn(`fadeTime (${fadeTime}s) quá ngắn (${fadeLength} samples), có thể gây artifacts. Nên tăng lên ${64 / sampleRate}s.`);
-        }
-        if (isDebug && fadeLength !== Math.round(fadeTime * sampleRate)) {
-            console.debug(`fadeTime điều chỉnh từ ${fadeTime}s thành ${actualFadeTime}s (${fadeLength} samples).`, {
-                minFadeLength,
-                avgCpuLoad,
-                pitchShift,
-                spectralProfile: validatedSpectralProfile
-            });
-        }
+		// Debug log
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (fadeLength < 64) {
+			console.warn(`fadeTime (${fadeTime}s) quá ngắn (${fadeLength} samples), có thể gây artifacts. Nên tăng lên ${64 / sampleRate}s.`);
+		}
+		if (isDebug && fadeLength !== Math.round(fadeTime * sampleRate)) {
+			console.debug(`fadeTime điều chỉnh từ ${fadeTime}s thành ${actualFadeTime}s (${fadeLength} samples).`, {
+				minFadeLength,
+				avgCpuLoad,
+				pitchShift,
+				spectralProfile: validatedSpectralProfile
+			});
+		}
 
-        // Tạo buffer
-        const buffer = context.createBuffer(channels, totalLength, sampleRate);
-        if (!buffer) throw new Error("Không thể tạo fade buffer.");
+		// Tạo buffer
+		const buffer = context.createBuffer(channels, totalLength, sampleRate);
+		if (!buffer) throw new Error("Không thể tạo fade buffer.");
 
-        // Hàm tính vibranceFactor
-        const calculateVibranceFactor = (vibrance, fadeLength, pitchFactor, spectralProfile) => {
-            const fadeDurationFactor = fadeLength < 1000 ? 0.85 : fadeLength < 5000 ? 1.0 : 1.15;
-            let factor = Math.min(Math.max(vibrance, 0), 0.9) * fadeDurationFactor * (1 - pitchFactor * 0.25);
-            if (spectralProfile.air > 0.7) {
-                factor *= 0.9;
-                if (isDebug) console.debug(`Giảm vibranceFactor xuống ${factor} do air cao`);
-            }
-            if (spectralProfile.transientEnergy > 0.7) factor *= 1.05;
-            if (spectralProfile.spectralEntropy > 0.7) factor *= 0.95;
-            return factor;
-        };
+		// Hàm tính vibranceFactor
+		const calculateVibranceFactor = (vibrance, fadeLength, pitchFactor, spectralProfile) => {
+			const fadeDurationFactor = fadeLength < 1000 ? 0.85 : fadeLength < 5000 ? 1.0 : 1.15;
+			let factor = Math.min(Math.max(vibrance, 0), 0.9) * fadeDurationFactor * (1 - pitchFactor * 0.25);
+			if (spectralProfile.air > 0.7) {
+				factor *= 0.9;
+				if (isDebug) console.debug(`Giảm vibranceFactor xuống ${factor} do air cao`);
+			}
+			if (spectralProfile.transientEnergy > 0.7) factor *= 1.05;
+			if (spectralProfile.spectralEntropy > 0.7) factor *= 0.95;
+			return factor;
+		};
 
-        // Bezier curve + cosine blend
-        const getFadeFunction = () => {
-            const adjustedSmoothness = Math.min(Math.max(smoothness * (sampleRate / 44100), 0.5), 1.8);
-            const pitchFactor = Math.abs(pitchShift);
-            const vibranceFactor = calculateVibranceFactor(vibrance, fadeLength, pitchFactor, validatedSpectralProfile);
-            const bezierP1 = 0.1 * adjustedSmoothness * (1 + pitchFactor * 0.05);
-            const bezierP2 = 0.9 * adjustedSmoothness * (1 - pitchFactor * 0.05);
-            const bezierCosineBlend = Math.max(0.5 - pitchFactor * 0.1 - validatedSpectralProfile.spectralComplexity * 0.1, 0.35);
-            return (t) => {
-                const t2 = t * t,
-                    t3 = t2 * t;
-                const mt = 1 - t,
-                    mt2 = mt * mt,
-                    mt3 = mt2 * mt;
-                const bezier = 3 * bezierP1 * t * mt2 + 3 * bezierP2 * t2 * mt + t3;
-                const cosPart = 0.5 * (1 - Math.cos(Math.PI * t));
-                const warmth = isVocal || validatedSpectralProfile.vocalPresence > 0.7 ? vocalWarmth : 1.0;
-                return Math.min(1, (bezier * bezierCosineBlend + cosPart * (1 - bezierCosineBlend)) * (1 + vibranceFactor * 0.15 * warmth));
-            };
-        };
+		// Bezier curve + cosine blend
+		const getFadeFunction = () => {
+			const adjustedSmoothness = Math.min(Math.max(smoothness * (sampleRate / 44100), 0.5), 1.8);
+			const pitchFactor = Math.abs(pitchShift);
+			const vibranceFactor = calculateVibranceFactor(vibrance, fadeLength, pitchFactor, validatedSpectralProfile);
+			const bezierP1 = 0.1 * adjustedSmoothness * (1 + pitchFactor * 0.05);
+			const bezierP2 = 0.9 * adjustedSmoothness * (1 - pitchFactor * 0.05);
+			const bezierCosineBlend = Math.max(0.5 - pitchFactor * 0.1 - validatedSpectralProfile.spectralComplexity * 0.1, 0.35);
+			return (t) => {
+				const t2 = t * t,
+					t3 = t2 * t;
+				const mt = 1 - t,
+					mt2 = mt * mt,
+					mt3 = mt2 * mt;
+				const bezier = 3 * bezierP1 * t * mt2 + 3 * bezierP2 * t2 * mt + t3;
+				const cosPart = 0.5 * (1 - Math.cos(Math.PI * t));
+				const warmth = isVocal || validatedSpectralProfile.vocalPresence > 0.7 ? vocalWarmth : 1.0;
+				return Math.min(1, (bezier * bezierCosineBlend + cosPart * (1 - bezierCosineBlend)) * (1 + vibranceFactor * 0.15 * warmth));
+			};
+		};
 
-        const fadeFunction = getFadeFunction();
+		const fadeFunction = getFadeFunction();
 
-        // Áp dụng fade curve
-        for (let ch = 0; ch < channels; ch++) {
-            const channelData = buffer.getChannelData(ch);
-            const fadeIndex1 = fadeLength;
-            const fadeIndex2 = activeLength - fadeLength;
-            for (let i = 0; i < totalLength; i++) {
-                if (i < fadeIndex1) {
-                    channelData[i] = fadeFunction(i / fadeLength);
-                } else if (i >= fadeIndex2 && i < activeLength) {
-                    channelData[i] = fadeFunction(1 - (i - fadeIndex2) / fadeLength);
-                } else if (i < activeLength) {
-                    channelData[i] = 1;
-                } else {
-                    channelData[i] = 0;
-                }
-            }
+		// Áp dụng fade curve
+		for (let ch = 0; ch < channels; ch++) {
+			const channelData = buffer.getChannelData(ch);
+			const fadeIndex1 = fadeLength;
+			const fadeIndex2 = activeLength - fadeLength;
+			for (let i = 0; i < totalLength; i++) {
+				if (i < fadeIndex1) {
+					channelData[i] = fadeFunction(i / fadeLength);
+				} else if (i >= fadeIndex2 && i < activeLength) {
+					channelData[i] = fadeFunction(1 - (i - fadeIndex2) / fadeLength);
+				} else if (i < activeLength) {
+					channelData[i] = 1;
+				} else {
+					channelData[i] = 0;
+				}
+			}
 
-            // Boundary smoothing động
-            const boundarySmoothing = Math.min(fadeLength / 8, 20);
-            for (let i = 0; i < boundarySmoothing; i++) {
-                const t = 0.5 * (1 - Math.cos(Math.PI * i / boundarySmoothing));
-                if (fadeIndex1 - i - 1 >= 0) {
-                    channelData[fadeIndex1 - i - 1] = channelData[fadeIndex1 - i - 1] * (1 - t) + 1 * t;
-                }
-                if (fadeIndex2 + i < activeLength) {
-                    channelData[fadeIndex2 + i] = channelData[fadeIndex2 + i] * (1 - t) + channelData[fadeIndex2 + i - 1] * t;
-                }
-            }
+			// Boundary smoothing động
+			const boundarySmoothing = Math.min(fadeLength / 8, 20);
+			for (let i = 0; i < boundarySmoothing; i++) {
+				const t = 0.5 * (1 - Math.cos(Math.PI * i / boundarySmoothing));
+				if (fadeIndex1 - i - 1 >= 0) {
+					channelData[fadeIndex1 - i - 1] = channelData[fadeIndex1 - i - 1] * (1 - t) + 1 * t;
+				}
+				if (fadeIndex2 + i < activeLength) {
+					channelData[fadeIndex2 + i] = channelData[fadeIndex2 + i] * (1 - t) + channelData[fadeIndex2 + i - 1] * t;
+				}
+			}
 
-            // Smoothing đặc biệt cho minFadeLength = 512
-            if (minFadeLength === 512) {
-                if (fadeIndex1 > 0) {
-                    channelData[0] *= 0.5 * (1 - Math.cos(Math.PI * 0.5));
-                }
-                if (fadeIndex2 < activeLength) {
-                    channelData[activeLength - 1] *= 0.5 * (1 - Math.cos(Math.PI * 0.5));
-                }
-            }
-        }
+			// Smoothing đặc biệt cho minFadeLength = 512
+			if (minFadeLength === 512) {
+				if (fadeIndex1 > 0) {
+					channelData[0] *= 0.5 * (1 - Math.cos(Math.PI * 0.5));
+				}
+				if (fadeIndex2 < activeLength) {
+					channelData[activeLength - 1] *= 0.5 * (1 - Math.cos(Math.PI * 0.5));
+				}
+			}
+		}
 
-        // Điều chỉnh outputGain
-        if (avgCpuLoad > 0.85 && this.outputGain) {
-            const targetGain = qualityMode === 'high' ? 0.7 : 0.6;
-            const adjustedGain = (validatedSpectralProfile.bass > 0.7 || validatedSpectralProfile.air > 0.7) ? targetGain * 0.95 : targetGain;
-            this.outputGain.gain.linearRampToValueAtTime(adjustedGain, context.currentTime + (this.rampTime || 0.075));
-            if (isDebug) console.debug(`Giảm outputGain xuống ${adjustedGain} do CPU load cao`, {
-                avgCpuLoad,
-                qualityMode
-            });
-        }
+		// Điều chỉnh outputGain
+		if (avgCpuLoad > 0.85 && this.outputGain) {
+			const targetGain = qualityMode === 'high' ? 0.7 : 0.6;
+			const adjustedGain = (validatedSpectralProfile.bass > 0.7 || validatedSpectralProfile.air > 0.7) ? targetGain * 0.95 : targetGain;
+			this.outputGain.gain.linearRampToValueAtTime(adjustedGain, context.currentTime + (this.rampTime || 0.075));
+			if (isDebug) console.debug(`Giảm outputGain xuống ${adjustedGain} do CPU load cao`, {
+				avgCpuLoad,
+				qualityMode
+			});
+		}
 
-        // Lưu buffer
-        if (memoryManager && typeof memoryManager.set === 'function') {
-            const spectralKey = `${validatedSpectralProfile.spectralComplexity}_${validatedSpectralProfile.vocalPresence}`;
-            const key = `fade_${activeTime}_${fadeTime}_bezier_${pitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
-            if (!(buffer instanceof AudioBuffer) || buffer.length < activeLength) {
-                throw new Error('Invalid fade buffer created');
-            }
-            memoryManager.set(key, buffer, 'high', {
-                metadata: {
-                    timestamp: Date.now()
-                }
-            });
-            memoryManager.pruneCache(memoryManager.getDynamicMaxSize?.() || 1000);
-            if (isDebug) {
-                console.debug(`Stored fade buffer with key: ${key}`, {
-                    bufferLength: buffer.length,
-                    channels: buffer.numberOfChannels,
-                    sampleRate: buffer.sampleRate
-                });
-            }
-        }
+		// Lưu buffer
+		if (memoryManager && typeof memoryManager.set === 'function') {
+			const spectralKey = `${validatedSpectralProfile.spectralComplexity}_${validatedSpectralProfile.vocalPresence}`;
+			const key = `fade_${activeTime}_${fadeTime}_bezier_${pitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
+			if (!(buffer instanceof AudioBuffer) || buffer.length < activeLength) {
+				throw new Error('Invalid fade buffer created');
+			}
+			memoryManager.set(key, buffer, 'high', {
+				metadata: {
+					timestamp: Date.now()
+				}
+			});
+			memoryManager.pruneCache(memoryManager.getDynamicMaxSize?.() || 1000);
+			if (isDebug) {
+				console.debug(`Stored fade buffer with key: ${key}`, {
+					bufferLength: buffer.length,
+					channels: buffer.numberOfChannels,
+					sampleRate: buffer.sampleRate
+				});
+			}
+		}
 
-        return buffer;
-    } catch (error) {
-        handleError('Error creating fade buffer', error, {
-            activeTime,
-            fadeTime,
-            options,
-            sampleRate
-        }, 'high', {
-            memoryManager
-        });
-        try {
-            const fallbackBuffer = context.createBuffer(channels, Math.round(activeTime * sampleRate), sampleRate);
-            for (let ch = 0; ch < channels; ch++) {
-                const channelData = fallbackBuffer.getChannelData(ch);
-                for (let i = 0; i < channelData.length; i++) {
-                    channelData[i] = 1;
-                }
-            }
-            return fallbackBuffer;
-        } catch (fallbackError) {
-            handleError('Error creating fallback buffer', fallbackError, {
-                activeTime,
-                sampleRate
-            }, 'high', {
-                memoryManager
-            });
-            return null;
-        }
-    }
+		return buffer;
+	} catch (error) {
+		handleError('Error creating fade buffer', error, {
+			activeTime,
+			fadeTime,
+			options,
+			sampleRate
+		}, 'high', {
+			memoryManager
+		});
+		try {
+			const fallbackBuffer = context.createBuffer(channels, Math.round(activeTime * sampleRate), sampleRate);
+			for (let ch = 0; ch < channels; ch++) {
+				const channelData = fallbackBuffer.getChannelData(ch);
+				for (let i = 0; i < channelData.length; i++) {
+					channelData[i] = 1;
+				}
+			}
+			return fallbackBuffer;
+		} catch (fallbackError) {
+			handleError('Error creating fallback buffer', fallbackError, {
+				activeTime,
+				sampleRate
+			}, 'high', {
+				memoryManager
+			});
+			return null;
+		}
+	}
 }
 
 function getShiftBuffers(context, activeTime, fadeTime, options = {}, memoryManager) {
-    // Kiểm tra đầu vào
-    if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
-        handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
-            memoryManager
-        });
-        return null;
-    }
-    activeTime = ensureFinite(activeTime, 0.2, {
-        errorMessage: 'Invalid activeTime, using default: 0.2'
-    });
-    fadeTime = ensureFinite(fadeTime, 0.1, {
-        errorMessage: 'Invalid fadeTime, using default: 0.1'
-    });
-    if (!memoryManager || typeof memoryManager.get !== 'function' || typeof memoryManager.set !== 'function') {
-        handleError('Invalid memoryManager', new Error('memoryManager with get/set methods is required'), {}, 'high', {
-            memoryManager
-        });
-        return null;
-    }
+	// Kiểm tra đầu vào
+	if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
+		handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
+			memoryManager
+		});
+		return null;
+	}
+	activeTime = ensureFinite(activeTime, 0.2, {
+		errorMessage: 'Invalid activeTime, using default: 0.2'
+	});
+	fadeTime = ensureFinite(fadeTime, 0.1, {
+		errorMessage: 'Invalid fadeTime, using default: 0.1'
+	});
+	if (!memoryManager || typeof memoryManager.get !== 'function' || typeof memoryManager.set !== 'function') {
+		handleError('Invalid memoryManager', new Error('memoryManager with get/set methods is required'), {}, 'high', {
+			memoryManager
+		});
+		return null;
+	}
 
-    const {
-        pitchShift = 0,
-        isVocal = false,
-        qualityMode = 'high',
-        channels = 1,
-        spectralProfile = {}
-    } = options;
+	const {
+		pitchShift = 0,
+			isVocal = false,
+			qualityMode = 'high',
+			channels = 1,
+			spectralProfile = {}
+	} = options;
 
-    // Chuẩn hóa pitchShift và spectralProfile
-    const validatedPitchShift = ensureFinite(pitchShift, 0, {
-        errorMessage: 'Invalid pitchShift, using default: 0'
-    });
-    const spectralDefaults = {
-        spectralComplexity: 0.5,
-        vocalPresence: 0.5
-    };
-    const validatedSpectralProfile = {
-        spectralComplexity: ensureFinite(spectralProfile?.spectralComplexity, spectralDefaults.spectralComplexity, {
-            errorMessage: 'Invalid spectralComplexity'
-        }),
-        vocalPresence: ensureFinite(spectralProfile?.vocalPresence, spectralDefaults.vocalPresence, {
-            errorMessage: 'Invalid vocalPresence'
-        })
-    };
+	// Chuẩn hóa pitchShift và spectralProfile
+	const validatedPitchShift = ensureFinite(pitchShift, 0, {
+		errorMessage: 'Invalid pitchShift, using default: 0'
+	});
+	const spectralDefaults = {
+		spectralComplexity: 0.5,
+		vocalPresence: 0.5
+	};
+	const validatedSpectralProfile = {
+		spectralComplexity: ensureFinite(spectralProfile?.spectralComplexity, spectralDefaults.spectralComplexity, {
+			errorMessage: 'Invalid spectralComplexity'
+		}),
+		vocalPresence: ensureFinite(spectralProfile?.vocalPresence, spectralDefaults.vocalPresence, {
+			errorMessage: 'Invalid vocalPresence'
+		})
+	};
 
-    // Tạo key cache
-    const spectralKey = `${validatedSpectralProfile.spectralComplexity}_${validatedSpectralProfile.vocalPresence}`;
-    const baseKey = `shift_${activeTime}_${fadeTime}_${validatedPitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
-    const keyDown = `${baseKey}_down`;
-    const keyUp = `${baseKey}_up`;
+	// Tạo key cache
+	const spectralKey = `${validatedSpectralProfile.spectralComplexity}_${validatedSpectralProfile.vocalPresence}`;
+	const baseKey = `shift_${activeTime}_${fadeTime}_${validatedPitchShift}_${isVocal}_${qualityMode}_${channels}_${spectralKey}`;
+	const keyDown = `${baseKey}_down`;
+	const keyUp = `${baseKey}_up`;
 
-    // Lấy buffer từ cache
-    let shiftDownBuffer = memoryManager.get(keyDown)?.buffer;
-    let shiftUpBuffer = memoryManager.get(keyUp)?.buffer;
+	// Lấy buffer từ cache
+	let shiftDownBuffer = memoryManager.get(keyDown)?.buffer;
+	let shiftUpBuffer = memoryManager.get(keyUp)?.buffer;
 
-    // Kiểm tra buffer hợp lệ và expiry
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    const expiryTime = 90000; // 90s
-    const validateBuffer = (buffer, key) => {
-        const metadata = memoryManager.get(key)?.metadata;
-        if (buffer instanceof AudioBuffer && buffer.length >= Math.round(activeTime * context.sampleRate)) {
-            if (metadata?.timestamp && Date.now() - metadata.timestamp > expiryTime) {
-                if (isDebug) console.debug(`Buffer expired for key: ${key}, recreating`);
-                return null;
-            }
-            return buffer;
-        }
-        if (buffer) {
-            handleError('Invalid buffer', new Error('Buffer validation failed'), {
-                key,
-                bufferLength: buffer?.length
-            }, 'low', {
-                memoryManager
-            });
-        }
-        return null;
-    };
+	// Kiểm tra buffer hợp lệ và expiry
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const expiryTime = 90000; // 90s
+	const validateBuffer = (buffer, key) => {
+		const metadata = memoryManager.get(key)?.metadata;
+		if (buffer instanceof AudioBuffer && buffer.length >= Math.round(activeTime * context.sampleRate)) {
+			if (metadata?.timestamp && Date.now() - metadata.timestamp > expiryTime) {
+				if (isDebug) console.debug(`Buffer expired for key: ${key}, recreating`);
+				return null;
+			}
+			return buffer;
+		}
+		if (buffer) {
+			handleError('Invalid buffer', new Error('Buffer validation failed'), {
+				key,
+				bufferLength: buffer?.length
+			}, 'low', {
+				memoryManager
+			});
+		}
+		return null;
+	};
 
-    shiftDownBuffer = validateBuffer(shiftDownBuffer, keyDown);
-    shiftUpBuffer = validateBuffer(shiftUpBuffer, keyUp);
+	shiftDownBuffer = validateBuffer(shiftDownBuffer, keyDown);
+	shiftUpBuffer = validateBuffer(shiftUpBuffer, keyUp);
 
-    // Tạo buffer mới nếu cần
-    if (!shiftDownBuffer || !shiftUpBuffer) {
-        try {
-            if (!shiftDownBuffer) {
-                shiftDownBuffer = createDelayTimeBuffer(context, activeTime, fadeTime, false, options, memoryManager);
-                if (!shiftDownBuffer || !(shiftDownBuffer instanceof AudioBuffer)) {
-                    throw new Error('Failed to create shiftDownBuffer');
-                }
-                memoryManager.set(keyDown, shiftDownBuffer, 'high', {
-                    metadata: {
-                        timestamp: Date.now()
-                    }
-                });
-                if (isDebug) console.debug(`Created and stored shiftDownBuffer with key: ${keyDown}`);
-            }
-            if (!shiftUpBuffer) {
-                shiftUpBuffer = createDelayTimeBuffer(context, activeTime, fadeTime, true, options, memoryManager);
-                if (!shiftUpBuffer || !(shiftUpBuffer instanceof AudioBuffer)) {
-                    throw new Error('Failed to create shiftUpBuffer');
-                }
-                memoryManager.set(keyUp, shiftUpBuffer, 'high', {
-                    metadata: {
-                        timestamp: Date.now()
-                    }
-                });
-                if (isDebug) console.debug(`Created and stored shiftUpBuffer with key: ${keyUp}`);
-            }
-        } catch (error) {
-            handleError('Error creating shift buffers', error, {
-                activeTime,
-                fadeTime,
-                options
-            }, 'high', {
-                memoryManager
-            });
-            return null;
-        }
-    }
+	// Tạo buffer mới nếu cần
+	if (!shiftDownBuffer || !shiftUpBuffer) {
+		try {
+			if (!shiftDownBuffer) {
+				shiftDownBuffer = createDelayTimeBuffer(context, activeTime, fadeTime, false, options, memoryManager);
+				if (!shiftDownBuffer || !(shiftDownBuffer instanceof AudioBuffer)) {
+					throw new Error('Failed to create shiftDownBuffer');
+				}
+				memoryManager.set(keyDown, shiftDownBuffer, 'high', {
+					metadata: {
+						timestamp: Date.now()
+					}
+				});
+				if (isDebug) console.debug(`Created and stored shiftDownBuffer with key: ${keyDown}`);
+			}
+			if (!shiftUpBuffer) {
+				shiftUpBuffer = createDelayTimeBuffer(context, activeTime, fadeTime, true, options, memoryManager);
+				if (!shiftUpBuffer || !(shiftUpBuffer instanceof AudioBuffer)) {
+					throw new Error('Failed to create shiftUpBuffer');
+				}
+				memoryManager.set(keyUp, shiftUpBuffer, 'high', {
+					metadata: {
+						timestamp: Date.now()
+					}
+				});
+				if (isDebug) console.debug(`Created and stored shiftUpBuffer with key: ${keyUp}`);
+			}
+		} catch (error) {
+			handleError('Error creating shift buffers', error, {
+				activeTime,
+				fadeTime,
+				options
+			}, 'high', {
+				memoryManager
+			});
+			return null;
+		}
+	}
 
-    // Debug log
-    if (isDebug) {
-        console.debug(`Retrieved shift buffers`, {
-            shiftDownLength: shiftDownBuffer?.length,
-            shiftUpLength: shiftUpBuffer?.length,
-            channels,
-            sampleRate: context.sampleRate
-        });
-    }
+	// Debug log
+	if (isDebug) {
+		console.debug(`Retrieved shift buffers`, {
+			shiftDownLength: shiftDownBuffer?.length,
+			shiftUpLength: shiftUpBuffer?.length,
+			channels,
+			sampleRate: context.sampleRate
+		});
+	}
 
-    return {
-        shiftDownBuffer,
-        shiftUpBuffer
-    };
+	return {
+		shiftDownBuffer,
+		shiftUpBuffer
+	};
 }
 
 function preserveFormant(pitchMult, baseFreq, vocalPresence, spectralProfile = {}) {
-    const absMult = Math.abs(pitchMult);
+	const absMult = Math.abs(pitchMult);
 
-    // Lấy spectralProfile với giá trị mặc định
-    const spectralDefaults = {
-        spectralComplexity: 0.5,
-        transientEnergy: 0.5,
-        bass: 0.5,
-        midHigh: 0.5,
-        air: 0.5
-    };
-    const validatedSpectralProfile = {
-        spectralComplexity: Number.isFinite(spectralProfile?.spectralComplexity) ? Math.max(0, Math.min(1, spectralProfile.spectralComplexity)) : spectralDefaults.spectralComplexity,
-        transientEnergy: Number.isFinite(spectralProfile?.transientEnergy) ? Math.max(0, Math.min(1, spectralProfile.transientEnergy)) : spectralDefaults.transientEnergy,
-        bass: Number.isFinite(spectralProfile?.bass) ? Math.max(0, Math.min(1, spectralProfile.bass)) : spectralDefaults.bass,
-        midHigh: Number.isFinite(spectralProfile?.midHigh) ? Math.max(0, Math.min(1, spectralProfile.midHigh)) : spectralDefaults.midHigh,
-        air: Number.isFinite(spectralProfile?.air) ? Math.max(0, Math.min(1, spectralProfile.air)) : spectralDefaults.air
-    };
+	// Lấy spectralProfile với giá trị mặc định
+	const spectralDefaults = {
+		spectralComplexity: 0.5,
+		transientEnergy: 0.5,
+		bass: 0.5,
+		midHigh: 0.5,
+		air: 0.5
+	};
+	const validatedSpectralProfile = {
+		spectralComplexity: Number.isFinite(spectralProfile?.spectralComplexity) ? Math.max(0, Math.min(1, spectralProfile.spectralComplexity)) : spectralDefaults.spectralComplexity,
+		transientEnergy: Number.isFinite(spectralProfile?.transientEnergy) ? Math.max(0, Math.min(1, spectralProfile.transientEnergy)) : spectralDefaults.transientEnergy,
+		bass: Number.isFinite(spectralProfile?.bass) ? Math.max(0, Math.min(1, spectralProfile.bass)) : spectralDefaults.bass,
+		midHigh: Number.isFinite(spectralProfile?.midHigh) ? Math.max(0, Math.min(1, spectralProfile.midHigh)) : spectralDefaults.midHigh,
+		air: Number.isFinite(spectralProfile?.air) ? Math.max(0, Math.min(1, spectralProfile.air)) : spectralDefaults.air
+	};
 
-    // Kiểm tra CPU load
-    const cpuLoad = this.getCPULoad ? this.getCPULoad() : 0.5;
-    const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-    const cpuLoadAdjust = cpuLoad > 0.85 || isLowPowerDevice ? 0.9 : 1.0; // Nới lỏng ngưỡng và tăng hệ số để giữ chất lượng
+	// Kiểm tra CPU load
+	const cpuLoad = this.getCPULoad ? this.getCPULoad() : 0.5;
+	const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+	const cpuLoadAdjust = cpuLoad > 0.85 || isLowPowerDevice ? 0.9 : 1.0; // Nới lỏng ngưỡng và tăng hệ số để giữ chất lượng
 
-    // Điều chỉnh shiftFactor thông minh hơn, tự động theo spectral để tránh rè và giữ tự nhiên
-    const complexityAdjust = validatedSpectralProfile.spectralComplexity > 0.65 ? 0.8 : (validatedSpectralProfile.transientEnergy > 0.65 ? 0.9 : 1.0); // Giảm ngưỡng để thích ứng sớm hơn
-    const shiftFactor = (pitchMult < 0 ? 1 + absMult * 0.2 : 1 + absMult * 0.3) * complexityAdjust * cpuLoadAdjust; // Giảm hệ số để vocal tự nhiên hơn
+	// Điều chỉnh shiftFactor thông minh hơn, tự động theo spectral để tránh rè và giữ tự nhiên
+	const complexityAdjust = validatedSpectralProfile.spectralComplexity > 0.65 ? 0.8 : (validatedSpectralProfile.transientEnergy > 0.65 ? 0.9 : 1.0); // Giảm ngưỡng để thích ứng sớm hơn
+	const shiftFactor = (pitchMult < 0 ? 1 + absMult * 0.2 : 1 + absMult * 0.3) * complexityAdjust * cpuLoadAdjust; // Giảm hệ số để vocal tự nhiên hơn
 
-    // Xác định loại vocal và điều chỉnh vocalFactor, thêm warmth cho giọng tự nhiên
-    const isFemaleVocal = baseFreq > 400;
-    const pitchBoost = absMult > 0.7 ? 1 + (absMult - 0.7) * 0.5 : 1.0; // Tăng pitchBoost và giảm ngưỡng
-    const warmthAdjust = validatedSpectralProfile.midHigh > 0.65 ? 1.15 : 1.0; // Tăng warmthAdjust để mid rõ hơn
-    const vocalFactor = Math.min(
-        vocalPresence > 0.65 ?
-        (isFemaleVocal ? 1.45 * pitchBoost * warmthAdjust : 1.35 * pitchBoost * warmthAdjust) : // Tăng vocalFactor và giảm ngưỡng
-        (validatedSpectralProfile.midHigh > 0.65 ? 1.2 : 1.0), // Tăng cho nhạc cụ midHigh
-        1.6 // Nới lỏng giới hạn để vocal nổi bật hơn
-    );
+	// Xác định loại vocal và điều chỉnh vocalFactor, thêm warmth cho giọng tự nhiên
+	const isFemaleVocal = baseFreq > 400;
+	const pitchBoost = absMult > 0.7 ? 1 + (absMult - 0.7) * 0.5 : 1.0; // Tăng pitchBoost và giảm ngưỡng
+	const warmthAdjust = validatedSpectralProfile.midHigh > 0.65 ? 1.15 : 1.0; // Tăng warmthAdjust để mid rõ hơn
+	const vocalFactor = Math.min(
+		vocalPresence > 0.65 ?
+		(isFemaleVocal ? 1.45 * pitchBoost * warmthAdjust : 1.35 * pitchBoost * warmthAdjust) : // Tăng vocalFactor và giảm ngưỡng
+		(validatedSpectralProfile.midHigh > 0.65 ? 1.2 : 1.0), // Tăng cho nhạc cụ midHigh
+		1.6 // Nới lỏng giới hạn để vocal nổi bật hơn
+	);
 
-    // Điều chỉnh tần số formant, thêm tự động theo bass/air để bass chắc treb rõ
-    const freqAdjust = Math.min(
-        (isFemaleVocal && pitchMult < 0) ? 1.2 * pitchBoost : // Tăng freqAdjust cho giọng nữ
-        (pitchMult < 0 ? 1.15 * pitchBoost : // Tăng cho hạ tone chung
-            (pitchMult > 0 && absMult > 0.7 ? 0.8 : 0.85)), // Giảm ngưỡng và hệ số để giữ tự nhiên
-        1.3 // Nới lỏng giới hạn
-    );
+	// Điều chỉnh tần số formant, thêm tự động theo bass/air để bass chắc treb rõ
+	const freqAdjust = Math.min(
+		(isFemaleVocal && pitchMult < 0) ? 1.2 * pitchBoost : // Tăng freqAdjust cho giọng nữ
+		(pitchMult < 0 ? 1.15 * pitchBoost : // Tăng cho hạ tone chung
+			(pitchMult > 0 && absMult > 0.7 ? 0.8 : 0.85)), // Giảm ngưỡng và hệ số để giữ tự nhiên
+		1.3 // Nới lỏng giới hạn
+	);
 
-    // Tăng bassAdjust để bass chắc hơn
-    const bassAdjust = validatedSpectralProfile.bass > 0.65 ? 1.2 : (validatedSpectralProfile.air > 0.65 ? 0.9 : 1.0); // Tăng bassAdjust và giảm ngưỡng
+	// Tăng bassAdjust để bass chắc hơn
+	const bassAdjust = validatedSpectralProfile.bass > 0.65 ? 1.2 : (validatedSpectralProfile.air > 0.65 ? 0.9 : 1.0); // Tăng bassAdjust và giảm ngưỡng
 
-    // Tính tần số formant
-    let freq = baseFreq / shiftFactor * vocalFactor * freqAdjust * bassAdjust;
-    const minFreq = 80; // Giảm minFreq để vocal sâu hơn
-    const maxFreq = 5500; // Tăng maxFreq để vocal sáng hơn
-    freq = Math.max(minFreq, Math.min(maxFreq, freq));
+	// Tính tần số formant
+	let freq = baseFreq / shiftFactor * vocalFactor * freqAdjust * bassAdjust;
+	const minFreq = 80; // Giảm minFreq để vocal sâu hơn
+	const maxFreq = 5500; // Tăng maxFreq để vocal sáng hơn
+	freq = Math.max(minFreq, Math.min(maxFreq, freq));
 
-    // Điều chỉnh gain, tăng transientBoost và midHighBoost để vocal và nhạc cụ chi tiết hơn
-    const transientBoost = validatedSpectralProfile.transientEnergy > 0.65 ? 1.2 : 1.0; // Tăng transientBoost và giảm ngưỡng
-    const midHighBoost = validatedSpectralProfile.midHigh > 0.65 ? 1.3 : 1.0; // Tăng midHighBoost và giảm ngưỡng
-    const airReduction = validatedSpectralProfile.air > 0.65 ? 0.85 : 1.0; // Nới lỏng airReduction để treble sáng hơn
-    const gain = Math.min((5.0 - absMult * 0.8) * transientBoost * midHighBoost * airReduction * cpuLoadAdjust, 5.5); // Tăng gain và giảm hệ số absMult
+	// Điều chỉnh gain, tăng transientBoost và midHighBoost để vocal và nhạc cụ chi tiết hơn
+	const transientBoost = validatedSpectralProfile.transientEnergy > 0.65 ? 1.2 : 1.0; // Tăng transientBoost và giảm ngưỡng
+	const midHighBoost = validatedSpectralProfile.midHigh > 0.65 ? 1.3 : 1.0; // Tăng midHighBoost và giảm ngưỡng
+	const airReduction = validatedSpectralProfile.air > 0.65 ? 0.85 : 1.0; // Nới lỏng airReduction để treble sáng hơn
+	const gain = Math.min((5.0 - absMult * 0.8) * transientBoost * midHighBoost * airReduction * cpuLoadAdjust, 5.5); // Tăng gain và giảm hệ số absMult
 
-    // Điều chỉnh Q để vocal mượt mà hơn
-    const qFactor = vocalPresence > 0.65 ?
-        (absMult > 0.7 ? 0.1 : 0.15) : // Giảm Q cho vocal khi pitch shift mạnh
-        (absMult > 0.7 ? 0.12 : 0.2); // Giảm Q cho nhạc cụ
-    const airQReduction = validatedSpectralProfile.air > 0.65 ? 0.85 : 1.0; // Nới lỏng airQReduction
-    const q = Math.max(1.2, (1.8 + absMult * qFactor) * airQReduction * cpuLoadAdjust); // Giảm Q để mượt hơn
+	// Điều chỉnh Q để vocal mượt mà hơn
+	const qFactor = vocalPresence > 0.65 ?
+		(absMult > 0.7 ? 0.1 : 0.15) : // Giảm Q cho vocal khi pitch shift mạnh
+		(absMult > 0.7 ? 0.12 : 0.2); // Giảm Q cho nhạc cụ
+	const airQReduction = validatedSpectralProfile.air > 0.65 ? 0.85 : 1.0; // Nới lỏng airQReduction
+	const q = Math.max(1.2, (1.8 + absMult * qFactor) * airQReduction * cpuLoadAdjust); // Giảm Q để mượt hơn
 
-    console.debug(`preserveFormant result`, {
-        freq,
-        gain,
-        q,
-        pitchMult,
-        baseFreq,
-        vocalPresence,
-        spectralProfile: validatedSpectralProfile,
-        cpuLoad,
-        isLowPowerDevice
-    });
+	console.debug(`preserveFormant result`, {
+		freq,
+		gain,
+		q,
+		pitchMult,
+		baseFreq,
+		vocalPresence,
+		spectralProfile: validatedSpectralProfile,
+		cpuLoad,
+		isLowPowerDevice
+	});
 
-    return {
-        freq,
-        gain,
-        q
-    };
+	return {
+		freq,
+		gain,
+		q
+	};
 }
 
 // Hàm tạo buffer điều chỉnh độ trễ với tối ưu hóa
 function createDelayTimeBuffer(context, activeTime, fadeTime, shiftUp, options = {}, memoryManager) {
-    // Kiểm tra đầu vào
-    if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
-        handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
-            memoryManager
-        });
-        throw new Error("Invalid AudioContext provided.");
-    }
-    activeTime = ensureFinite(activeTime, DEFAULT_BUFFER_TIME, {
-        errorMessage: 'Invalid activeTime, using default: 0.2'
-    });
-    fadeTime = ensureFinite(fadeTime, DEFAULT_FADE_TIME, {
-        errorMessage: 'Invalid fadeTime, using default: 0.1'
-    });
-    if (activeTime <= 0 || fadeTime <= 0) {
-        handleError('Invalid parameters', new Error('activeTime and fadeTime must be positive'), {
-            activeTime,
-            fadeTime
-        }, 'high', {
-            memoryManager
-        });
-        throw new Error("activeTime and fadeTime must be positive finite numbers.");
-    }
-    if (!memoryManager || typeof memoryManager.set !== 'function') {
-        handleError('Invalid memoryManager', new Error('memoryManager with set method is required'), {}, 'high', {
-            memoryManager
-        });
-        throw new Error("Invalid memoryManager provided.");
-    }
+	// Kiểm tra đầu vào
+	if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
+		handleError('Invalid AudioContext', new Error('Invalid context'), {}, 'high', {
+			memoryManager
+		});
+		throw new Error("Invalid AudioContext provided.");
+	}
+	activeTime = ensureFinite(activeTime, DEFAULT_BUFFER_TIME, {
+		errorMessage: 'Invalid activeTime, using default: 0.2'
+	});
+	fadeTime = ensureFinite(fadeTime, DEFAULT_FADE_TIME, {
+		errorMessage: 'Invalid fadeTime, using default: 0.1'
+	});
+	if (activeTime <= 0 || fadeTime <= 0) {
+		handleError('Invalid parameters', new Error('activeTime and fadeTime must be positive'), {
+			activeTime,
+			fadeTime
+		}, 'high', {
+			memoryManager
+		});
+		throw new Error("activeTime and fadeTime must be positive finite numbers.");
+	}
+	if (!memoryManager || typeof memoryManager.set !== 'function') {
+		handleError('Invalid memoryManager', new Error('memoryManager with set method is required'), {}, 'high', {
+			memoryManager
+		});
+		throw new Error("Invalid memoryManager provided.");
+	}
 
-    const {
-        pitchShift = 0,
-        isVocal = false,
-        spectralProfile = {},
-        qualityMode = 'high'
-    } = options;
+	const {
+		pitchShift = 0,
+			isVocal = false,
+			spectralProfile = {},
+			qualityMode = 'high',
+			channels = 1 // Mặc định mono, hỗ trợ stereo
+	} = options;
 
-    // Chuẩn hóa pitchShift
-    const validatedPitchShift = ensureFinite(pitchShift, 0, {
-        errorMessage: 'Invalid pitchShift, using default: 0'
-    });
+	// Chuẩn hóa pitchShift và channels
+	const validatedPitchShift = ensureFinite(pitchShift, 0, {
+		errorMessage: 'Invalid pitchShift, using default: 0'
+	});
+	const validatedChannels = Math.max(1, Math.min(Math.round(ensureFinite(channels, 1, {
+		errorMessage: 'Invalid channels, using default: 1'
+	})), 8));
 
-    // Tính deviceAdaptFactor (HiFi AT2030)
-    const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-    const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-    const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2)));
+	// Chuẩn hóa spectralProfile
+	const spectralDefaults = {
+		spectralComplexity: 0.5,
+		vocalPresence: 0.5
+	};
+	const validatedSpectralProfile = {
+		spectralComplexity: ensureFinite(spectralProfile?.spectralComplexity, spectralDefaults.spectralComplexity, {
+			errorMessage: 'Invalid spectralComplexity'
+		}),
+		vocalPresence: ensureFinite(spectralProfile?.vocalPresence, spectralDefaults.vocalPresence, {
+			errorMessage: 'Invalid vocalPresence'
+		})
+	};
 
-    // Tính fadeLength
-    let fadeLength = Math.max(Math.round(fadeTime * context.sampleRate), 512);
-    fadeLength = adjustFadeLength(fadeLength, context.sampleRate, spectralProfile, validatedPitchShift, isVocal, cpuLoad, isLowPowerDevice);
+	try {
+		const sampleRate = ensureFinite(context.sampleRate, 44100, {
+			errorMessage: 'Invalid sampleRate, using default: 44100'
+		});
+		if (sampleRate <= 0) {
+			throw new Error("sampleRate không hợp lệ: phải là số dương hữu hạn.");
+		}
 
-    const activeLength = Math.round(activeTime * context.sampleRate);
-    const totalLength = activeLength + Math.max(0, Math.round((activeTime - 2 * fadeTime) * context.sampleRate));
+		// Lấy CPU load và thông tin thiết bị
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
 
-    // Tạo buffer
-    const buffer = context.createBuffer(1, totalLength, context.sampleRate); // Mono mặc định
-    const channelData = buffer.getChannelData(0);
-    for (let i = 0; i < activeLength; i++) {
-        let delayValue = shiftUp ? (activeLength - i) / activeLength : i / activeLength;
-        delayValue *= deviceAdaptFactor; // Tối ưu cho thiết bị yếu
-        channelData[i] = delayValue;
-    }
-    for (let i = activeLength; i < totalLength; i++) {
-        channelData[i] = 0; // Silence
-    }
+		// Xác định minFadeLength
+		const minFadeLength = isVocal ? 768 : (Math.abs(validatedPitchShift) > 0.3 ? DEFAULT_MIN_FADE_LENGTH : 512); // Tăng minFadeLength cho vocal
 
-    // Áp dụng formant từ preserveFormant nếu isVocal
-    if (isVocal) {
-        const formant = preserveFormant(validatedPitchShift, 500, spectralProfile.vocalPresence, spectralProfile);
-        // Áp dụng formant vào buffer nếu cần (tối ưu nhẹ để giữ tự nhiên)
-        for (let i = 0; i < totalLength; i++) {
-            channelData[i] *= formant.gain * 0.1; // Điều chỉnh nhẹ để tránh đục
-        }
-    }
+		// Điều chỉnh fadeLength
+		let fadeLength = Math.max(Math.round(fadeTime * sampleRate), minFadeLength);
+		fadeLength = adjustFadeLength(fadeLength, sampleRate, validatedSpectralProfile, validatedPitchShift, isVocal, cpuLoad, isLowPowerDevice);
 
-    // Debug log
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    if (isDebug) {
-        console.debug('Created delay time buffer', {
-            totalLength,
-            activeLength,
-            fadeLength,
-            shiftUp,
-            validatedPitchShift,
-            qualityMode,
-            isVocal,
-            deviceAdaptFactor
-        });
-    }
+		const activeLength = Math.round(activeTime * sampleRate);
+		const totalLength = activeLength + Math.max(0, Math.round((activeTime - 2 * fadeTime) * sampleRate));
 
-    return buffer;
+		// Tạo buffer
+		const buffer = context.createBuffer(validatedChannels, totalLength, sampleRate);
+		if (!buffer) {
+			throw new Error("Failed to create delay time buffer.");
+		}
+
+		// Áp dụng linear delay với smoothing
+		const pitchFactor = Math.abs(validatedPitchShift);
+		const smoothing = Math.min(fadeLength / 8, 20); // Smoothing động
+		for (let ch = 0; ch < validatedChannels; ch++) {
+			const channelData = buffer.getChannelData(ch);
+			for (let i = 0; i < activeLength; i++) {
+				let delayValue = shiftUp ? (activeLength - i) / activeLength : i / activeLength;
+				if (i < smoothing) {
+					const t = 0.5 * (1 - Math.cos(Math.PI * i / smoothing));
+					delayValue = delayValue * t + (shiftUp ? 1 : 0) * (1 - t);
+				} else if (i >= activeLength - smoothing) {
+					const t = 0.5 * (1 - Math.cos(Math.PI * (activeLength - i) / smoothing));
+					delayValue = delayValue * t + (shiftUp ? 0 : 1) * (1 - t);
+				}
+				channelData[i] = delayValue;
+			}
+			for (let i = activeLength; i < totalLength; i++) {
+				channelData[i] = 0; // Silence
+			}
+		}
+
+		// Kiểm tra buffer hợp lệ
+		if (!(buffer instanceof AudioBuffer) || buffer.length < activeLength || buffer.numberOfChannels !== validatedChannels) {
+			throw new Error('Invalid delay time buffer created');
+		}
+
+		// Lưu buffer
+		const spectralKey = `${validatedSpectralProfile.spectralComplexity}_${validatedSpectralProfile.vocalPresence}`;
+		const key = `delay_${activeTime}_${fadeTime}_${validatedPitchShift}_${shiftUp}_${qualityMode}_${validatedChannels}_${spectralKey}`;
+		memoryManager.set(key, buffer, 'high', {
+			metadata: {
+				timestamp: Date.now()
+			}
+		});
+		memoryManager.pruneCache(memoryManager.getDynamicMaxSize?.() || 1000);
+
+		// Debug log
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug(`Created delay time buffer with key: ${key}`, {
+				bufferLength: buffer.length,
+				channels: buffer.numberOfChannels,
+				sampleRate: buffer.sampleRate,
+				smoothing,
+				shiftUp,
+				pitchFactor
+			});
+		}
+
+		return buffer;
+	} catch (error) {
+		handleError('Error creating delay time buffer', error, {
+			activeTime,
+			fadeTime,
+			shiftUp,
+			options,
+			sampleRate: context?.sampleRate
+		}, 'high', {
+			memoryManager
+		});
+		return null;
+	}
 }
 
 // Các hằng số mặc định
@@ -960,312 +1014,322 @@ const DEFAULT_FFT_SIZE = 4096; // Tăng từ 2048
 const DEFAULT_MIN_FADE_LENGTH = 768; // Tăng từ 512
 
 class MemoryManager {
-    constructor() {
-        this.buffers = new Map();
-        this.priorities = new Map();
-        this.accessTimestamps = new Map();
-        this.expiryTime = 90000; // 90s
-        this.maxTotalSize = 100 * 1024 * 1024; // 100MB mặc định
-    }
+	constructor() {
+		this.buffers = new Map();
+		this.priorities = new Map();
+		this.accessTimestamps = new Map();
+		this.expiryTime = 90000; // 90s
+		this.maxTotalSize = 100 * 1024 * 1024; // 100MB mặc định
+	}
 
-    /**
-     * Compresses AudioBuffer to Uint8Array for storage efficiency.
-     * @param {AudioBuffer} buffer - Buffer to compress
-     * @returns {Uint8Array} Compressed data
-     */
-    compressBuffer(buffer) {
-        if (!(buffer instanceof AudioBuffer)) return null;
-        const data = new Float32Array(buffer.length * buffer.numberOfChannels);
-        for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-            const channelData = buffer.getChannelData(ch);
-            data.set(channelData, ch * buffer.length);
-        }
-        // Nén đơn giản: Chuyển Float32Array thành Uint8Array (giảm 4x)
-        const uint8 = new Uint8Array(data.buffer);
-        return uint8;
-    }
+	/**
+	 * Compresses AudioBuffer to Uint8Array for storage efficiency.
+	 * @param {AudioBuffer} buffer - Buffer to compress
+	 * @returns {Uint8Array} Compressed data
+	 */
+	compressBuffer(buffer) {
+		if (!(buffer instanceof AudioBuffer)) return null;
+		const data = new Float32Array(buffer.length * buffer.numberOfChannels);
+		for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+			const channelData = buffer.getChannelData(ch);
+			data.set(channelData, ch * buffer.length);
+		}
+		// Nén đơn giản: Chuyển Float32Array thành Uint8Array (giảm 4x)
+		const uint8 = new Uint8Array(data.buffer);
+		return uint8;
+	}
 
-    /**
-     * Decompresses Uint8Array back to AudioBuffer.
-     * @param {Uint8Array} compressed - Compressed data
-     * @param {number} length - Original buffer length
-     * @param {number} channels - Number of channels
-     * @param {number} sampleRate - Sample rate
-     * @returns {AudioBuffer} Decompressed buffer
-     */
-    decompressBuffer(compressed, length, channels, sampleRate) {
-        if (!(compressed instanceof Uint8Array)) return null;
-        const float32 = new Float32Array(compressed.buffer);
-        const buffer = new AudioContext().createBuffer(channels, length, sampleRate);
-        for (let ch = 0; ch < channels; ch++) {
-            const channelData = buffer.getChannelData(ch);
-            channelData.set(float32.subarray(ch * length, (ch + 1) * length));
-        }
-        return buffer;
-    }
+	/**
+	 * Decompresses Uint8Array back to AudioBuffer.
+	 * @param {Uint8Array} compressed - Compressed data
+	 * @param {number} length - Original buffer length
+	 * @param {number} channels - Number of channels
+	 * @param {number} sampleRate - Sample rate
+	 * @returns {AudioBuffer} Decompressed buffer
+	 */
+	decompressBuffer(compressed, length, channels, sampleRate) {
+		if (!(compressed instanceof Uint8Array)) return null;
+		const float32 = new Float32Array(compressed.buffer);
+		const buffer = new AudioContext().createBuffer(channels, length, sampleRate);
+		for (let ch = 0; ch < channels; ch++) {
+			const channelData = buffer.getChannelData(ch);
+			channelData.set(float32.subarray(ch * length, (ch + 1) * length));
+		}
+		return buffer;
+	}
 
-    /**
-     * Calculates buffer size in bytes.
-     * @param {Object} buffer - Buffer data
-     * @returns {number} Size in bytes
-     */
-    getBufferSize(buffer) {
-        if (buffer instanceof AudioBuffer) {
-            const length = ensureFinite(buffer.length, 0, {
-                errorMessage: 'Invalid buffer.length'
-            });
-            const channels = ensureFinite(buffer.numberOfChannels, 1, {
-                errorMessage: 'Invalid buffer.numberOfChannels'
-            });
-            if (length < 0 || channels < 0) {
-                handleError('Invalid buffer dimensions', new Error('Negative length or channels'), {
-                    length,
-                    channels
-                }, 'high', {
-                    memoryManager: this
-                });
-                return 0;
-            }
-            return length * channels * 4; // Float32Array: 4 bytes/sample
-        } else if (buffer instanceof Uint8Array) {
-            return buffer.byteLength; // Kích thước nén
-        }
-        return 0; // Non-AudioBuffer (e.g., formantHistory)
-    }
+	/**
+	 * Calculates buffer size in bytes.
+	 * @param {Object} buffer - Buffer data
+	 * @returns {number} Size in bytes
+	 */
+	getBufferSize(buffer) {
+		if (buffer instanceof AudioBuffer) {
+			const length = ensureFinite(buffer.length, 0, {
+				errorMessage: 'Invalid buffer.length'
+			});
+			const channels = ensureFinite(buffer.numberOfChannels, 1, {
+				errorMessage: 'Invalid buffer.numberOfChannels'
+			});
+			if (length < 0 || channels < 0) {
+				handleError('Invalid buffer dimensions', new Error('Negative length or channels'), {
+					length,
+					channels
+				}, 'high', {
+					memoryManager: this
+				});
+				return 0;
+			}
+			return length * channels * 4; // Float32Array: 4 bytes/sample
+		} else if (buffer instanceof Uint8Array) {
+			return buffer.byteLength; // Kích thước nén
+		}
+		return 0; // Non-AudioBuffer (e.g., formantHistory)
+	}
 
-    /**
-     * Retrieves a buffer by key, updating access timestamp and checking expiry.
-     * Compatible with Jungle's getFFTAnalysis and optimizeSoundProfile.
-     * @param {string} key - Buffer key
-     * @returns {Object|undefined} Buffer data
-     */
-    get(key) {
-        if (!this.buffers.has(key)) return undefined;
-        const {
-            buffer,
-            metadata
-        } = this.buffers.get(key);
-        const timestamp = metadata?.timestamp || this.accessTimestamps.get(key) || 0;
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (timestamp && Date.now() - timestamp > this.expiryTime) {
-            if (isDebug) console.debug(`Buffer expired for key: ${key}, removing`);
-            this.buffers.delete(key);
-            this.priorities.delete(key);
-            this.accessTimestamps.delete(key);
-            return undefined;
-        }
-        this.accessTimestamps.set(key, Date.now());
-        if (buffer instanceof Uint8Array && metadata?.originalLength && metadata?.channels && metadata?.sampleRate) {
-            return this.decompressBuffer(buffer, metadata.originalLength, metadata.channels, metadata.sampleRate);
-        }
-        return buffer;
-    }
+	/**
+	 * Retrieves a buffer by key, updating access timestamp and checking expiry.
+	 * Compatible with Jungle's getFFTAnalysis and optimizeSoundProfile.
+	 * @param {string} key - Buffer key
+	 * @returns {Object|undefined} Buffer data
+	 */
+	get(key) {
+		if (!this.buffers.has(key)) return undefined;
+		const {
+			buffer,
+			metadata
+		} = this.buffers.get(key);
+		const timestamp = metadata?.timestamp || this.accessTimestamps.get(key) || 0;
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (timestamp && Date.now() - timestamp > this.expiryTime) {
+			if (isDebug) console.debug(`Buffer expired for key: ${key}, removing`);
+			this.buffers.delete(key);
+			this.priorities.delete(key);
+			this.accessTimestamps.delete(key);
+			return undefined;
+		}
+		this.accessTimestamps.set(key, Date.now());
+		if (buffer instanceof Uint8Array && metadata?.originalLength && metadata?.channels && metadata?.sampleRate) {
+			return this.decompressBuffer(buffer, metadata.originalLength, metadata.channels, metadata.sampleRate);
+		}
+		return buffer;
+	}
 
-    /**
-     * Alias for get, maintaining backward compatibility.
-     * @param {string} key - Buffer key
-     * @returns {Object|undefined} Buffer data
-     */
-    getBuffer(key) {
-        return this.get(key);
-    }
+	/**
+	 * Alias for get, maintaining backward compatibility.
+	 * @param {string} key - Buffer key
+	 * @returns {Object|undefined} Buffer data
+	 */
+	getBuffer(key) {
+		return this.get(key);
+	}
 
-    /**
-     * Stores a buffer with priority, metadata, and updating access timestamp.
-     * Compatible with Jungle's set method.
-     * @param {string} key - Buffer key
-     * @param {Object} buffer - Buffer data
-     * @param {string} [priority='normal'] - Priority ('normal' or 'high')
-     * @param {Object} [metadata={}] - Metadata (e.g., timestamp)
-     */
-    set(key, buffer, priority = 'normal', metadata = {}) {
-        try {
-            // Validate buffer
-            if (!buffer || (buffer instanceof AudioBuffer && (buffer.length <= 0 || !Number.isFinite(buffer.sampleRate)))) {
-                throw new Error('Invalid buffer provided');
-            }
+	/**
+	 * Stores a buffer with priority, metadata, and updating access timestamp.
+	 * Compatible with Jungle's set method.
+	 * @param {string} key - Buffer key
+	 * @param {Object} buffer - Buffer data
+	 * @param {string} [priority='normal'] - Priority ('normal' or 'high')
+	 * @param {Object} [metadata={}] - Metadata (e.g., timestamp)
+	 */
+	set(key, buffer, priority = 'normal', metadata = {}) {
+		try {
+			// Validate buffer
+			if (!buffer || (buffer instanceof AudioBuffer && (buffer.length <= 0 || !Number.isFinite(buffer.sampleRate)))) {
+				throw new Error('Invalid buffer provided');
+			}
 
-            // Kiểm tra maxTotalSize trước khi lưu
-            const bufferSize = this.getBufferSize(buffer);
-            let totalSize = 0;
-            for (const { buffer: b } of this.buffers.values()) {
-                totalSize += this.getBufferSize(b);
-            }
-            if (totalSize + bufferSize > this.maxTotalSize) {
-                throw new Error(`Buffer size exceeds maxTotalSize: ${bufferSize} bytes, total: ${totalSize}`);
-            }
+			// Kiểm tra maxTotalSize trước khi lưu
+			const bufferSize = this.getBufferSize(buffer);
+			let totalSize = 0;
+			for (const {
+					buffer: b
+				}
+				of this.buffers.values()) {
+				totalSize += this.getBufferSize(b);
+			}
+			if (totalSize + bufferSize > this.maxTotalSize) {
+				throw new Error(`Buffer size exceeds maxTotalSize: ${bufferSize} bytes, total: ${totalSize}`);
+			}
 
-            // Nén AudioBuffer
-            let storedBuffer = buffer;
-            let updatedMetadata = {
-                ...metadata,
-                timestamp: metadata.timestamp || Date.now()
-            };
-            if (buffer instanceof AudioBuffer) {
-                storedBuffer = this.compressBuffer(buffer);
-                if (!storedBuffer) {
-                    throw new Error('Failed to compress buffer');
-                }
-                updatedMetadata = {
-                    ...updatedMetadata,
-                    originalLength: buffer.length,
-                    channels: buffer.numberOfChannels,
-                    sampleRate: buffer.sampleRate
-                };
-            }
+			// Nén AudioBuffer
+			let storedBuffer = buffer;
+			let updatedMetadata = {
+				...metadata,
+				timestamp: metadata.timestamp || Date.now()
+			};
+			if (buffer instanceof AudioBuffer) {
+				storedBuffer = this.compressBuffer(buffer);
+				if (!storedBuffer) {
+					throw new Error('Failed to compress buffer');
+				}
+				updatedMetadata = {
+					...updatedMetadata,
+					originalLength: buffer.length,
+					channels: buffer.numberOfChannels,
+					sampleRate: buffer.sampleRate
+				};
+			}
 
-            // Validate priority
-            const validPriorities = ['normal', 'high'];
-            const effectivePriority = validPriorities.includes(priority) ? priority : 'normal';
+			// Validate priority
+			const validPriorities = ['normal', 'high'];
+			const effectivePriority = validPriorities.includes(priority) ? priority : 'normal';
 
-            // Giao dịch: Đảm bảo đồng bộ
-            const transaction = () => {
-                this.buffers.set(key, {
-                    buffer: storedBuffer,
-                    metadata: updatedMetadata
-                });
-                this.priorities.set(key, effectivePriority);
-                this.accessTimestamps.set(key, Date.now());
-            };
-            transaction();
+			// Giao dịch: Đảm bảo đồng bộ
+			const transaction = () => {
+				this.buffers.set(key, {
+					buffer: storedBuffer,
+					metadata: updatedMetadata
+				});
+				this.priorities.set(key, effectivePriority);
+				this.accessTimestamps.set(key, Date.now());
+			};
+			transaction();
 
-            // Prune cache
-            const maxSize = this.getDynamicMaxSize();
-            this.pruneCache(maxSize);
+			// Prune cache
+			const maxSize = this.getDynamicMaxSize();
+			this.pruneCache(maxSize);
 
-            // Debug log
-            const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-            if (isDebug) {
-                console.debug(`Stored buffer with key: ${key}`, {
-                    size: this.getBufferSize(storedBuffer),
-                    priority: effectivePriority,
-                    timestamp: updatedMetadata.timestamp,
-                    compressed: storedBuffer instanceof Uint8Array
-                });
-            }
-        } catch (error) {
-            handleError('Error setting buffer', error, {
-                key,
-                priority,
-                metadata,
-                bufferSize: this.getBufferSize(buffer)
-            }, 'high', {
-                memoryManager: this
-            });
-        }
-    }
+			// Debug log
+			const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+			if (isDebug) {
+				console.debug(`Stored buffer with key: ${key}`, {
+					size: this.getBufferSize(storedBuffer),
+					priority: effectivePriority,
+					timestamp: updatedMetadata.timestamp,
+					compressed: storedBuffer instanceof Uint8Array
+				});
+			}
+		} catch (error) {
+			handleError('Error setting buffer', error, {
+				key,
+				priority,
+				metadata,
+				bufferSize: this.getBufferSize(buffer)
+			}, 'high', {
+				memoryManager: this
+			});
+		}
+	}
 
-    /**
-     * Alias for set, maintaining backward compatibility.
-     * @param {string} key - Buffer key
-     * @param {Object} buffer - Buffer data
-     * @param {string} [priority='normal'] - Priority
-     * @param {Object} [metadata={}] - Metadata
-     */
-    allocateBuffer(key, buffer, priority = 'normal', metadata = {}) {
-        this.set(key, buffer, priority, metadata);
-    }
+	/**
+	 * Alias for set, maintaining backward compatibility.
+	 * @param {string} key - Buffer key
+	 * @param {Object} buffer - Buffer data
+	 * @param {string} [priority='normal'] - Priority
+	 * @param {Object} [metadata={}] - Metadata
+	 */
+	allocateBuffer(key, buffer, priority = 'normal', metadata = {}) {
+		this.set(key, buffer, priority, metadata);
+	}
 
-    /**
-     * Prunes cache to fit within maxSize and maxTotalSize, prioritizing high-priority and recently accessed buffers.
-     * @param {number} maxSize - Maximum number of buffers
-     */
-    pruneCache(maxSize) {
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        let totalSize = 0;
-        for (const { buffer } of this.buffers.values()) {
-            totalSize += this.getBufferSize(buffer);
-        }
+	/**
+	 * Prunes cache to fit within maxSize and maxTotalSize, prioritizing high-priority and recently accessed buffers.
+	 * @param {number} maxSize - Maximum number of buffers
+	 */
+	pruneCache(maxSize) {
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		let totalSize = 0;
+		for (const {
+				buffer
+			}
+			of this.buffers.values()) {
+			totalSize += this.getBufferSize(buffer);
+		}
 
-        // Xóa buffer hết hạn
-        const expiredKeys = [];
-        for (const [key, { metadata }] of this.buffers.entries()) {
-            const timestamp = metadata?.timestamp || this.accessTimestamps.get(key) || 0;
-            if (timestamp && Date.now() - timestamp > this.expiryTime) {
-                expiredKeys.push(key);
-            }
-        }
-        for (const key of expiredKeys) {
-            const bufferSize = this.getBufferSize(this.buffers.get(key)?.buffer || 0);
-            if (isDebug) console.debug(`Pruning expired buffer: ${key}, size: ${bufferSize} bytes`);
-            this.buffers.delete(key);
-            this.priorities.delete(key);
-            this.accessTimestamps.delete(key);
-            totalSize -= bufferSize;
-        }
+		// Xóa buffer hết hạn
+		const expiredKeys = [];
+		for (const [key, {
+				metadata
+			}] of this.buffers.entries()) {
+			const timestamp = metadata?.timestamp || this.accessTimestamps.get(key) || 0;
+			if (timestamp && Date.now() - timestamp > this.expiryTime) {
+				expiredKeys.push(key);
+			}
+		}
+		for (const key of expiredKeys) {
+			const bufferSize = this.getBufferSize(this.buffers.get(key)?.buffer || 0);
+			if (isDebug) console.debug(`Pruning expired buffer: ${key}, size: ${bufferSize} bytes`);
+			this.buffers.delete(key);
+			this.priorities.delete(key);
+			this.accessTimestamps.delete(key);
+			totalSize -= bufferSize;
+		}
 
-        // Xóa buffer nếu vượt maxSize hoặc maxTotalSize
-        while (this.buffers.size > maxSize || totalSize > this.maxTotalSize) {
-            const keys = Array.from(this.buffers.keys()).sort((a, b) => {
-                const priorityA = this.priorities.get(a) === 'high' ? 1 : 0;
-                const priorityB = this.priorities.get(b) === 'high' ? 1 : 0;
-                const timeA = this.accessTimestamps.get(a) || 0;
-                const timeB = this.accessTimestamps.get(b) || 0;
-                return priorityB - priorityA || timeB - timeA;
-            });
+		// Xóa buffer nếu vượt maxSize hoặc maxTotalSize
+		while (this.buffers.size > maxSize || totalSize > this.maxTotalSize) {
+			const keys = Array.from(this.buffers.keys()).sort((a, b) => {
+				const priorityA = this.priorities.get(a) === 'high' ? 1 : 0;
+				const priorityB = this.priorities.get(b) === 'high' ? 1 : 0;
+				const timeA = this.accessTimestamps.get(a) || 0;
+				const timeB = this.accessTimestamps.get(b) || 0;
+				return priorityB - priorityA || timeB - timeA;
+			});
 
-            const keyToRemove = keys[keys.length - 1];
-            if (!keyToRemove) break;
+			const keyToRemove = keys[keys.length - 1];
+			if (!keyToRemove) break;
 
-            const bufferSize = this.getBufferSize(this.buffers.get(keyToRemove)?.buffer || 0);
-            if (isDebug) {
-                console.debug(`Pruning buffer: ${keyToRemove}, size: ${bufferSize} bytes, reason: ${this.buffers.size > maxSize ? 'maxSize' : 'maxTotalSize'}`);
-            }
+			const bufferSize = this.getBufferSize(this.buffers.get(keyToRemove)?.buffer || 0);
+			if (isDebug) {
+				console.debug(`Pruning buffer: ${keyToRemove}, size: ${bufferSize} bytes, reason: ${this.buffers.size > maxSize ? 'maxSize' : 'maxTotalSize'}`);
+			}
 
-            this.buffers.delete(keyToRemove);
-            this.priorities.delete(keyToRemove);
-            this.accessTimestamps.delete(keyToRemove);
-            totalSize -= bufferSize;
+			this.buffers.delete(keyToRemove);
+			this.priorities.delete(keyToRemove);
+			this.accessTimestamps.delete(keyToRemove);
+			totalSize -= bufferSize;
 
-            if (this.buffers.size === 0) break;
-        }
+			if (this.buffers.size === 0) break;
+		}
 
-        // Log trạng thái cache
-        if (isDebug) {
-            console.debug(`Cache state after pruning`, this.getCacheStats());
-        }
-    }
+		// Log trạng thái cache
+		if (isDebug) {
+			console.debug(`Cache state after pruning`, this.getCacheStats());
+		}
+	}
 
-    /**
-     * Returns cache statistics.
-     * @returns {Object} Cache stats
-     */
-    getCacheStats() {
-        let totalSize = 0;
-        let highPriorityCount = 0;
-        for (const [key, { buffer }] of this.buffers.entries()) {
-            totalSize += this.getBufferSize(buffer);
-            if (this.priorities.get(key) === 'high') highPriorityCount++;
-        }
-        return {
-            bufferCount: this.buffers.size,
-            totalSizeBytes: totalSize,
-            highPriorityCount,
-            normalPriorityCount: this.buffers.size - highPriorityCount,
-            maxTotalSize: this.maxTotalSize,
-            maxBufferCount: this.getDynamicMaxSize()
-        };
-    }
+	/**
+	 * Returns cache statistics.
+	 * @returns {Object} Cache stats
+	 */
+	getCacheStats() {
+		let totalSize = 0;
+		let highPriorityCount = 0;
+		for (const [key, {
+				buffer
+			}] of this.buffers.entries()) {
+			totalSize += this.getBufferSize(buffer);
+			if (this.priorities.get(key) === 'high') highPriorityCount++;
+		}
+		return {
+			bufferCount: this.buffers.size,
+			totalSizeBytes: totalSize,
+			highPriorityCount,
+			normalPriorityCount: this.buffers.size - highPriorityCount,
+			maxTotalSize: this.maxTotalSize,
+			maxBufferCount: this.getDynamicMaxSize()
+		};
+	}
 
-    /**
-     * Calculates dynamic max cache size based on device memory.
-     * @returns {number} Dynamic max size
-     */
-    getDynamicMaxSize() {
-        const deviceMemory = navigator.deviceMemory || 4;
-        const baseSize = Math.round(50 + deviceMemory * 10);
-        this.maxTotalSize = Math.max(100 * 1024 * 1024, deviceMemory * 50 * 1024 * 1024);
-        return baseSize;
-    }
+	/**
+	 * Calculates dynamic max cache size based on device memory.
+	 * @returns {number} Dynamic max size
+	 */
+	getDynamicMaxSize() {
+		const deviceMemory = navigator.deviceMemory || 4;
+		const baseSize = Math.round(50 + deviceMemory * 10);
+		this.maxTotalSize = Math.max(100 * 1024 * 1024, deviceMemory * 50 * 1024 * 1024);
+		return baseSize;
+	}
 
-    /**
-     * Clears all buffers (for testing or reset).
-     */
-    clear() {
-        this.buffers.clear();
-        this.priorities.clear();
-        this.accessTimestamps.clear();
-    }
+	/**
+	 * Clears all buffers (for testing or reset).
+	 */
+	clear() {
+		this.buffers.clear();
+		this.priorities.clear();
+		this.accessTimestamps.clear();
+	}
 }
 
 function Jungle(context, options = {}) {
@@ -1275,7 +1339,20 @@ function Jungle(context, options = {}) {
         // Khởi tạo contextId
         this.contextId = options.contextId || Date.now().toString(36);
 
-        // Kiểm tra và khởi tạo AudioContext trước khi lấy cpuLoad
+        // Kiểm tra cache khởi tạo qua generateCacheSignature
+        const cacheKey = this.generateCacheSignature?.(this.contextId, {
+            spectralProfile: options.spectralProfile,
+            currentGenre: options.currentGenre,
+            qualityMode: options.qualityMode
+        }) || this.contextId;
+        if (this.memoryManager?.get(cacheKey)?.timestamp > Date.now() - 60000) {
+            const cachedConfig = this.memoryManager.get(cacheKey);
+            if (isDebug) console.debug('Reusing cached Jungle config', { cacheKey, cachedConfig });
+            Object.assign(this, cachedConfig.instance);
+            return;
+        }
+
+        // Kiểm tra và khởi tạo AudioContext
         if (!context || !(context instanceof AudioContext) || context.state === 'closed') {
             console.warn('Invalid or closed AudioContext provided, creating new AudioContext');
             try {
@@ -1311,27 +1388,6 @@ function Jungle(context, options = {}) {
             document.addEventListener('touchstart', userGestureHandler);
         }
 
-        // Lấy cpuLoad sau khi AudioContext được khởi tạo
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(options.currentProfile) ? options.currentProfile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = options.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const cpuLoad = this.getCPULoad && this.context && this.context.state !== 'closed' ? 
-            ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (navigator.hardwareConcurrency < 4 ? 0.5 : 0.2))); // HiFi AT2030
-        const cacheKey = this.generateCacheSignature?.(this.contextId, {
-            spectralProfile: options.spectralProfile,
-            currentGenre: options.currentGenre,
-            qualityMode: options.qualityMode,
-            profile,
-            listenerProfile,
-            cpuLoad
-        }) || `jungle_${this.contextId}_${profile}`;
-        if (this.memoryManager?.get(cacheKey)?.timestamp > Date.now() - 60000 * deviceAdaptFactor) {
-            const cachedConfig = this.memoryManager.get(cacheKey);
-            if (isDebug) console.debug('Reusing cached Jungle config', { cacheKey, cachedConfig });
-            Object.assign(this, cachedConfig.instance);
-            return;
-        }
-
         // Cảnh báo sampleRate thấp
         if (this.context.sampleRate < 44100) {
             console.warn(`SampleRate thấp (${this.context.sampleRate}Hz) có thể gây ra lỗi. Khuyến nghị sử dụng 44100Hz hoặc cao hơn.`);
@@ -1340,6 +1396,7 @@ function Jungle(context, options = {}) {
 
         // Dự đoán qualityMode thông minh
         const deviceMemory = navigator.deviceMemory || 4;
+        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
         const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
         this.qualityMode = options.qualityMode || (
             deviceMemory < 4 || cpuLoad > 0.8 || isLowPowerDevice ? 'low' : 'high'
@@ -1357,62 +1414,75 @@ function Jungle(context, options = {}) {
         this.notchQ = ensureFinite(options.notchQ, DEFAULT_NOTCH_Q, { errorMessage: 'Invalid notchQ' });
         this.formantF1Freq = ensureFinite(options.formantF1Freq, DEFAULT_FORMANT_F1_FREQ, { errorMessage: 'Invalid formantF1Freq' });
         this.formantF2Freq = ensureFinite(options.formantF2Freq, DEFAULT_FORMANT_F2_FREQ, { errorMessage: 'Invalid formantF2Freq' });
-        this.formantF3Freq = ensureFinite(options.formantF3Freq, DEFAULT_FORMANT_F3_FREQ, { errorMessage: 'Invalid formantF3Freq' });
         this.formantQ = ensureFinite(options.formantQ, DEFAULT_FORMANT_Q, { errorMessage: 'Invalid formantQ' });
         this.subMidFreq = ensureFinite(options.subMidFreq, DEFAULT_SUBMID_FREQ, { errorMessage: 'Invalid subMidFreq' });
         this.subTrebleFreq = ensureFinite(options.subTrebleFreq, DEFAULT_SUBTREBLE_FREQ, { errorMessage: 'Invalid subTrebleFreq' });
-        this.midBassFreq = ensureFinite(options.midBassFreq, DEFAULT_MIDBASS_FREQ, { errorMessage: 'Invalid midBassFreq' });
-        this.highMidFreq = ensureFinite(options.highMidFreq, DEFAULT_HIGHMID_FREQ, { errorMessage: 'Invalid highMidFreq' });
-        this.airFreq = ensureFinite(options.airFreq, DEFAULT_AIR_FREQ, { errorMessage: 'Invalid airFreq' });
+        this.midBassFreq = ensureFinite(options.midBassFreq, 200, { errorMessage: 'Invalid midBassFreq' });
+        this.highMidFreq = ensureFinite(options.highMidFreq, 2000, { errorMessage: 'Invalid highMidFreq' });
+        this.airFreq = ensureFinite(options.airFreq, 10000, { errorMessage: 'Invalid airFreq' });
 
-        // Khởi tạo spectralProfile tối giản để tránh ảnh hưởng âm thanh
+        // Khởi tạo spectralProfile với chroma và điều chỉnh thông minh
         this.spectralProfile = options.spectralProfile || {
             subBass: 0.5,
-            bass: 0.5,
+            bass: this.currentProfile === 'bassHeavy' ? 0.9 : 0.5, // Giảm bass nhẹ để tránh đục
             subMid: 0.5,
             midLow: 0.5,
-            midHigh: 0.5,
+            midHigh: this.currentProfile === 'vocal' || this.currentProfile === 'karaokeDynamic' ? 0.7 : 0.5, // Tăng midHigh cho vocal trong trẻo
             high: 0.5,
-            subTreble: 0.5,
+            subTreble: this.currentProfile === 'bright' || this.currentProfile === 'smartStudio' ? 0.65 : 0.5, // Tăng subTreble cho treble rõ ràng
             air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
+            vocalPresence: this.currentProfile === 'vocal' ? 0.8 : 0.5, // Tăng vocalPresence cho giọng hát trong suốt
+            transientEnergy: this.currentProfile === 'rockMetal' ? 0.7 : 0.5, // Tăng transient cho rockMetal
             instruments: {},
-            chroma: Array(12).fill(0.5),
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
+            chroma: Array(12).fill(0.5)
         };
         this.tempoMemory = options.tempoMemory || { current: 120, previous: 120 };
-        this.currentGenre = options.currentGenre || 'Unknown';
-        this.currentKey = options.currentKey || { key: 'Unknown', confidence: 0, isMajor: true };
-        this.currentProfile = profile;
-        this.nextProcessingInterval = ensureFinite(options.nextProcessingInterval, 800, { errorMessage: 'Invalid nextProcessingInterval' });
+        this.currentGenre = options.currentGenre || "Unknown";
+        this.currentKey = options.currentKey || { key: "Unknown", confidence: 0, isMajor: true };
+        this.currentProfile = options.currentProfile || "proNatural";
+        this.nextProcessingInterval = ensureFinite(options.nextProcessingInterval, 1000, { errorMessage: 'Invalid nextProcessingInterval' });
         this.currentPitchMult = ensureFinite(options.currentPitchMult, 0, { errorMessage: 'Invalid currentPitchMult' });
-        this.noiseLevel = options.noiseLevel || { level: 0, midFreq: 0.5, white: 0.5 };
+        this.noiseLevel = options.noiseLevel || { level: 0, midFreq: 0.5 };
         this.qualityPrediction = options.qualityPrediction || { score: 0, recommendations: [] };
-        this.isVocal = options.isVocal || profile === 'vocal';
+        this.isVocal = options.isVocal || false;
         this.wienerGain = ensureFinite(options.wienerGain, 1, { errorMessage: 'Invalid wienerGain' });
         this.polyphonicPitches = options.polyphonicPitches || [];
-        this.transientBoost = ensureFinite(options.transientBoost, DEFAULT_TRANSIENT_BOOST, { errorMessage: 'Invalid transientBoost' });
+        this.transientBoost = ensureFinite(options.transientBoost, 0, { errorMessage: 'Invalid transientBoost' });
 
-        // Tối ưu bufferTime
-        const pitchMultFactor = 1 + Math.abs(this.currentPitchMult) * 0.6;
-        this.bufferTime = Math.max(this.bufferTime, this.fadeTime * 2.7 * pitchMultFactor);
-        if (this.qualityMode === 'high' && listenerProfile === 'audiophile') {
-            this.bufferTime *= 1.2;
-        } else if (isLowPowerDevice && cpuLoad > 0.9) {
-            this.bufferTime *= 0.9 * deviceAdaptFactor;
+        // Tích hợp DynamicFormantPitchShift (DFPS) để nâng hạ tone cao mượt mà
+        this.dynamicFormantPitchShift = {
+            enabled: this.isVocal || this.currentProfile === 'vocal' || this.currentProfile === 'karaokeDynamic',
+            formantScale: ensureFinite(options.formantScale || 1.0, 1.0, { errorMessage: 'Invalid formantScale' }),
+            pitchShiftFactor: Math.max(0.5, Math.min(2.0, 1 + this.currentPitchMult)), // Giới hạn pitch shift để tránh méo mó
+            harmonicPreservation: this.currentProfile === 'vocal' ? 0.9 : 0.7, // Giữ hài âm cho vocal trong trẻo
+            phaseLock: this.qualityMode === 'high', // Phase-locked vocoder cho chất lượng cao
+            transientPreservation: this.currentProfile === 'rockMetal' || this.currentProfile === 'smartStudio' ? 0.8 : 0.6 // Giữ transient cho rockMetal và smartStudio
+        };
+        if (this.dynamicFormantPitchShift.enabled && isDebug) {
+            console.debug('DynamicFormantPitchShift initialized', {
+                formantScale: this.dynamicFormantPitchShift.formantScale,
+                pitchShiftFactor: this.dynamicFormantPitchShift.pitchShiftFactor,
+                harmonicPreservation: this.dynamicFormantPitchShift.harmonicPreservation,
+                phaseLock: this.dynamicFormantPitchShift.phaseLock,
+                transientPreservation: this.dynamicFormantPitchShift.transientPreservation
+            });
         }
-        if (this.spectralProfile.spectralEntropy > 0.7 || this.spectralProfile.harmonicRatio > 0.7) {
+
+        // Tối ưu bufferTime với DFPS
+        const pitchMultFactor = 1 + Math.abs(this.currentPitchMult) * 0.5;
+        this.bufferTime = Math.max(this.bufferTime, this.fadeTime * 2.5 * pitchMultFactor);
+        if (this.qualityMode === 'high') {
             this.bufferTime *= 1.2;
         }
-        if (this.bufferTime < this.fadeTime * 2.7) {
-            console.warn('bufferTime được điều chỉnh để đảm bảo chuyển đổi mượt mà', { bufferTime: this.bufferTime });
-            this.bufferTime = this.fadeTime * 2.7;
+        if (this.dynamicFormantPitchShift.enabled) {
+            this.bufferTime *= 1.1; // Tăng bufferTime nhẹ để xử lý DFPS mượt mà
+        }
+        if (this.bufferTime < this.fadeTime * 2.5) {
+            console.warn("bufferTime được điều chỉnh để đảm bảo chuyển đổi mượt mà", { bufferTime: this.bufferTime });
+            this.bufferTime = this.fadeTime * 2.5;
         }
         if (this.delayTime > MAX_DELAY_TIME) {
-            console.warn('delayTime vượt quá MAX_DELAY_TIME, giới hạn lại', { delayTime: MAX_DELAY_TIME });
+            console.warn("delayTime vượt quá MAX_DELAY_TIME, giới hạn lại", { delayTime: MAX_DELAY_TIME });
             this.delayTime = MAX_DELAY_TIME;
         }
 
@@ -1421,44 +1491,40 @@ function Jungle(context, options = {}) {
         const maxCacheSize = this.calculateMaxCacheSize?.() || 100;
         this.memoryManager.setDynamicMaxSize?.(maxCacheSize);
         this.memoryManager.pruneCache(maxCacheSize);
-        if (isDebug) console.debug('MemoryManager initialized', { maxCacheSize, cacheStats: this.memoryManager.getCacheStats?.(), profile, listenerProfile, cpuLoad });
+        if (isDebug) console.debug('MemoryManager initialized', { maxCacheSize, cacheStats: this.memoryManager.getCacheStats?.() });
 
-        // Khởi tạo AnalyserNode với tối ưu fftSize
+        // Khởi tạo AnalyserNode với tối ưu fftSize cho thiết bị yếu
         try {
             this._analyser = options.analyser || this.context.createAnalyser();
             const analyserConfig = options.analyserConfig || {};
-            const fftSizeBase = (this.qualityMode === 'low' || isLowPowerDevice) ? 512 : 1024;
             this._analyser.fftSize = ensureFinite(
                 analyserConfig.fftSize,
-                fftSizeBase * (listenerProfile === 'audiophile' ? 1.5 : listenerProfile === 'casual' ? 0.8 : 1.0),
+                (this.qualityMode === 'low' || isLowPowerDevice) ? 512 : (this.dynamicFormantPitchShift.enabled ? 2048 : 1024), // Tăng fftSize cho DFPS
                 { errorMessage: 'Invalid fftSize' }
             );
             this._analyser.smoothingTimeConstant = ensureFinite(
                 analyserConfig.smoothingTimeConstant,
-                0.8 * (listenerProfile === 'audiophile' ? 0.9 : listenerProfile === 'casual' ? 1.1 : 1.0),
+                this.currentProfile === 'vocal' ? 0.7 : 0.85, // Giảm smoothing cho vocal trong trẻo
                 { errorMessage: 'Invalid smoothingTimeConstant' }
             );
             if (isDebug) console.debug('AnalyserNode initialized', {
                 fftSize: this._analyser.fftSize,
                 smoothing: this._analyser.smoothingTimeConstant,
                 contextState: this.context.state,
-                contextId: this.contextId,
-                profile,
-                listenerProfile,
-                cpuLoad
+                contextId: this.contextId
             });
         } catch (error) {
-            handleError('Không thể khởi tạo AnalyserNode', error, { contextId: this.contextId, profile, listenerProfile, cpuLoad }, 'high', { memoryManager: this.memoryManager });
+            handleError('Không thể khởi tạo AnalyserNode', error, { contextId: this.contextId }, 'high', { memoryManager: this.memoryManager });
             throw new Error('Không thể khởi tạo AnalyserNode. Vui lòng kiểm tra AudioContext.');
         }
 
-        // Tạo buffers
+        // Tạo buffers với tối ưu cho DFPS
         try {
             const bufferOptions = {
                 contextId: this.contextId,
-                smoothness: 1.3,
-                vibrance: 0.5,
-                pitchShift: this.currentPitchMult,
+                smoothness: this.currentProfile === 'vocal' ? 1.5 : 1.3, // Tăng smoothness cho vocal
+                vibrance: this.currentProfile === 'bright' ? 0.7 : 0.5, // Tăng vibrance cho bright
+                pitchShift: this.dynamicFormantPitchShift.pitchShiftFactor,
                 isVocal: this.isVocal,
                 spectralProfile: this.spectralProfile,
                 currentGenre: this.currentGenre,
@@ -1466,8 +1532,9 @@ function Jungle(context, options = {}) {
                 wienerGain: this.wienerGain,
                 polyphonicPitches: this.polyphonicPitches,
                 qualityMode: this.qualityMode,
-                profile,
-                listenerProfile
+                edgeFade: this.currentProfile === 'proNatural' ? 0.03 : 0.05, // Giảm edgeFade cho proNatural
+                formantScale: this.dynamicFormantPitchShift.formantScale,
+                harmonicPreservation: this.dynamicFormantPitchShift.harmonicPreservation
             };
 
             const buffers = getShiftBuffers(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
@@ -1476,29 +1543,26 @@ function Jungle(context, options = {}) {
             this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
 
             if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
-                throw new Error('Không thể tạo buffer hợp lệ');
+                throw new Error("Không thể tạo buffer hợp lệ");
             }
             if (this.fadeBuffer.length < this.bufferTime * this.context.sampleRate) {
-                throw new Error('Độ dài fadeBuffer không đủ', {
+                throw new Error("Độ dài fadeBuffer không đủ", {
                     expected: this.bufferTime * this.context.sampleRate,
                     actual: this.fadeBuffer.length
                 });
             }
 
-            if (isDebug) console.debug('Buffers initialized', {
+            if (isDebug) console.debug("Buffers initialized", {
                 shiftDownLength: this.shiftDownBuffer.length,
                 shiftUpLength: this.shiftUpBuffer.length,
                 fadeBufferLength: this.fadeBuffer.length,
                 bufferTime: this.bufferTime,
                 fadeTime: this.fadeTime,
                 sampleRate: this.context.sampleRate,
-                bufferOptions,
-                profile,
-                listenerProfile,
-                cpuLoad
+                bufferOptions
             });
         } catch (error) {
-            handleError('Lỗi khi tạo buffer', error, { contextId: this.contextId, bufferOptions, profile, listenerProfile, cpuLoad }, 'high', { memoryManager: this.memoryManager });
+            handleError("Lỗi khi tạo buffer", error, { contextId: this.contextId, bufferOptions }, 'high', { memoryManager: this.memoryManager });
             if (this.ownsContext) this.context.close();
             throw error;
         }
@@ -1506,9 +1570,9 @@ function Jungle(context, options = {}) {
         // Khởi tạo nodes
         try {
             this.initializeNodes();
-            if (isDebug) console.debug('Nodes initialized successfully', { contextId: this.contextId, profile, listenerProfile, cpuLoad });
+            if (isDebug) console.debug("Nodes initialized successfully", { contextId: this.contextId });
         } catch (error) {
-            handleError('Lỗi khi khởi tạo nodes', error, { contextId: this.contextId, profile, listenerProfile, cpuLoad }, 'high', { memoryManager: this.memoryManager });
+            handleError("Lỗi khi khởi tạo nodes", error, { contextId: this.contextId }, 'high', { memoryManager: this.memoryManager });
             if (this.ownsContext) this.context.close();
             throw error;
         }
@@ -1517,9 +1581,9 @@ function Jungle(context, options = {}) {
         try {
             const spatialConfig = options.spatialAudioConfig || { panningModel: 'equalpower' };
             this.initializeSpatialAudio(spatialConfig);
-            if (isDebug) console.debug('Spatial audio initialized successfully', { spatialConfig, contextId: this.contextId, profile, listenerProfile, cpuLoad });
+            if (isDebug) console.debug("Spatial audio initialized successfully", { spatialConfig, contextId: this.contextId });
         } catch (error) {
-            handleError('Lỗi khi khởi tạo spatial audio', error, { contextId: this.contextId, spatialConfig, profile, listenerProfile, cpuLoad }, 'high', { memoryManager: this.memoryManager });
+            handleError("Lỗi khi khởi tạo spatial audio", error, { contextId: this.contextId, spatialConfig }, 'high', { memoryManager: this.memoryManager });
             if (this.ownsContext) this.context.close();
             throw error;
         }
@@ -1542,16 +1606,17 @@ function Jungle(context, options = {}) {
                     _analyser: this._analyser,
                     shiftDownBuffer: this.shiftDownBuffer,
                     shiftUpBuffer: this.shiftUpBuffer,
-                    fadeBuffer: this.fadeBuffer
+                    fadeBuffer: this.fadeBuffer,
+                    dynamicFormantPitchShift: this.dynamicFormantPitchShift
                 },
                 timestamp: Date.now(),
-                expiry: Date.now() + 60000 * deviceAdaptFactor
+                expiry: Date.now() + 60000
             }, 'high');
-            if (isDebug) console.debug('Cached Jungle config', { cacheKey, maxCacheSize, profile, listenerProfile, cpuLoad });
+            if (isDebug) console.debug('Cached Jungle config', { cacheKey, maxCacheSize });
         }
 
     } catch (error) {
-        handleError('Lỗi trong hàm khởi tạo Jungle', error, { contextId: this.contextId, profile, listenerProfile, cpuLoad }, 'high', { memoryManager: this.memoryManager });
+        handleError('Lỗi trong hàm khởi tạo Jungle', error, { contextId: this.contextId }, 'high', { memoryManager: this.memoryManager });
         if (this.ownsContext && this.context) {
             this.context.close().catch(err => console.warn('Không thể đóng AudioContext', err));
         }
@@ -1560,1161 +1625,1001 @@ function Jungle(context, options = {}) {
 }
 
 Jungle.prototype.initializeNodes = function() {
-    try {
-        // Validate AudioContext
-        if (!(this.context instanceof (window.AudioContext || window.webkitAudioContext))) {
-            throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
-        }
+	try {
+		// Validate AudioContext
+		if (!(this.context instanceof(window.AudioContext || window.webkitAudioContext))) {
+			throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
+		}
 
-        // Check if already initialized
-        if (this.input) {
-            console.debug('Nodes already initialized, skipping reinitialization');
-            return;
-        }
+		// Check if already initialized
+		if (this.input) {
+			console.debug('Nodes already initialized, skipping reinitialization');
+			return;
+		}
 
-        // Check device capability
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false; // Sửa lỗi: Đồng bộ với disconnect/reset
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // HiFi AT2030
+		// Check device capability
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 2;
+		const performanceFactor = isLowPowerDevice ? 0.8 : 1.0; // Reduce gain by 20% on low-power devices
 
-        // Convert Float32Array to AudioBuffer
-        const createAudioBuffer = (float32Array, context, sampleRate, options = {}) => {
-            const { channels = 1, normalize = false, validateData = true } = options;
+		// Convert Float32Array to AudioBuffer
+		const createAudioBuffer = (float32Array, context, sampleRate, options = {}) => {
+			const {
+				channels = 1,
+					normalize = false,
+					validateData = true
+			} = options;
 
-            if (!(context instanceof (window.AudioContext || window.webkitAudioContext))) {
-                throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
-            }
-            if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-                throw new Error(`Invalid sampleRate: must be a positive number, got ${sampleRate}.`);
-            }
-            if (!float32Array || !(float32Array instanceof Float32Array)) {
-                throw new Error('Invalid Float32Array: buffer is undefined or not a Float32Array.');
-            }
-            if (float32Array.length === 0) {
-                throw new Error('Invalid Float32Array: buffer is empty.');
-            }
-            if (![1, 2].includes(channels)) {
-                throw new Error(`Invalid channels: must be 1 (mono) or 2 (stereo), got ${channels}.`);
-            }
-            if (float32Array.length % channels !== 0) {
-                throw new Error(`Invalid buffer length: ${float32Array.length} not divisible by channels (${channels}.`);
-            }
+			if (!(context instanceof(window.AudioContext || window.webkitAudioContext))) {
+				throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
+			}
+			if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+				throw new Error(`Invalid sampleRate: must be a positive number, got ${sampleRate}.`);
+			}
+			if (!float32Array || !(float32Array instanceof Float32Array)) {
+				throw new Error('Invalid Float32Array: buffer is undefined or not a Float32Array.');
+			}
+			if (float32Array.length === 0) {
+				throw new Error('Invalid Float32Array: buffer is empty.');
+			}
+			if (![1, 2].includes(channels)) {
+				throw new Error(`Invalid channels: must be 1 (mono) or 2 (stereo), got ${channels}.`);
+			}
+			if (float32Array.length % channels !== 0) {
+				throw new Error(`Invalid buffer length: ${float32Array.length} not divisible by channels (${channels}).`);
+			}
 
-            if (validateData) {
-                const step = float32Array.length > 10000 ? Math.floor(float32Array.length / 1000) : 1;
-                for (let i = 0; i < float32Array.length; i += step) {
-                    if (!Number.isFinite(float32Array[i])) {
-                        throw new Error(`Invalid data at index ${i}: contains NaN or Infinity.`);
-                    }
-                }
-            }
+			if (validateData) {
+				// Optimize for Worker: check subset for large buffers
+				const step = float32Array.length > 10000 ? Math.floor(float32Array.length / 1000) : 1;
+				for (let i = 0; i < float32Array.length; i += step) {
+					if (!Number.isFinite(float32Array[i])) {
+						throw new Error(`Invalid data at index ${i}: contains NaN or Infinity.`);
+					}
+				}
+			}
 
-            let data = float32Array;
-            if (normalize) {
-                const maxAbs = Math.max(...float32Array.map(Math.abs));
-                if (maxAbs > 1) {
-                    data = new Float32Array(float32Array.length);
-                    for (let i = 0; i < float32Array.length; i++) {
-                        data[i] = float32Array[i] / maxAbs;
-                    }
-                }
-            }
+			let data = float32Array;
+			if (normalize) {
+				const maxAbs = Math.max(...float32Array.map(Math.abs));
+				if (maxAbs > 1) {
+					data = new Float32Array(float32Array.length);
+					for (let i = 0; i < float32Array.length; i++) {
+						data[i] = float32Array[i] / maxAbs;
+					}
+				}
+			}
 
-            const buffer = context.createBuffer(channels, data.length / channels, sampleRate);
-            if (channels === 1) {
-                buffer.getChannelData(0).set(data);
-            } else {
-                const leftChannel = new Float32Array(data.length / 2);
-                const rightChannel = new Float32Array(data.length / 2);
-                for (let i = 0; i < data.length / 2; i++) {
-                    leftChannel[i] = data[i * 2];
-                    rightChannel[i] = data[i * 2 + 1];
-                }
-                buffer.getChannelData(0).set(leftChannel);
-                buffer.getChannelData(1).set(rightChannel);
-            }
+			const buffer = context.createBuffer(channels, data.length / channels, sampleRate);
+			if (channels === 1) {
+				buffer.getChannelData(0).set(data);
+			} else {
+				const leftChannel = new Float32Array(data.length / 2);
+				const rightChannel = new Float32Array(data.length / 2);
+				for (let i = 0; i < data.length / 2; i++) {
+					leftChannel[i] = data[i * 2];
+					rightChannel[i] = data[i * 2 + 1];
+				}
+				buffer.getChannelData(0).set(leftChannel);
+				buffer.getChannelData(1).set(rightChannel);
+			}
 
-            return buffer;
-        };
+			return buffer;
+		};
 
-        // Initialize buffers
-        if (this.shiftDownData instanceof Float32Array) {
-            this.shiftDownBuffer = createAudioBuffer(this.shiftDownData, this.context, this.context.sampleRate, { channels: 1 });
-        }
-        if (this.shiftUpData instanceof Float32Array) {
-            this.shiftUpBuffer = createAudioBuffer(this.shiftUpData, this.context, this.context.sampleRate, { channels: 1 });
-        }
-        if (this.fadeData instanceof Float32Array) {
-            this.fadeBuffer = createAudioBuffer(this.fadeData, this.context, this.context.sampleRate, { channels: 1 });
-        }
+		// Initialize buffers
+		if (this.shiftDownData instanceof Float32Array) {
+			this.shiftDownBuffer = createAudioBuffer(this.shiftDownData, this.context, this.context.sampleRate, {
+				channels: 1
+			});
+		}
+		if (this.shiftUpData instanceof Float32Array) {
+			this.shiftUpBuffer = createAudioBuffer(this.shiftUpData, this.context, this.context.sampleRate, {
+				channels: 1
+			});
+		}
+		if (this.fadeData instanceof Float32Array) {
+			this.fadeBuffer = createAudioBuffer(this.fadeData, this.context, this.context.sampleRate, {
+				channels: 1
+			});
+		}
 
-        if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
-            throw new Error('Missing required buffers: shiftDownBuffer, shiftUpBuffer, or fadeBuffer is undefined.');
-        }
-        if (!(this.shiftDownBuffer instanceof AudioBuffer) ||
-            !(this.shiftUpBuffer instanceof AudioBuffer) ||
-            !(this.fadeBuffer instanceof AudioBuffer)) {
-            throw new Error('Invalid buffer type: buffers must be instances of AudioBuffer.');
-        }
+		if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
+			throw new Error('Missing required buffers: shiftDownBuffer, shiftUpBuffer, or fadeBuffer is undefined.');
+		}
+		if (!(this.shiftDownBuffer instanceof AudioBuffer) ||
+			!(this.shiftUpBuffer instanceof AudioBuffer) ||
+			!(this.fadeBuffer instanceof AudioBuffer)) {
+			throw new Error('Invalid buffer type: buffers must be instances of AudioBuffer.');
+		}
 
-        // Validate spectralProfile
-        const spectralProfile = this.spectralProfile || {};
-        const defaultSpectralValue = 0.5;
-        const spectralDefaults = {
-            subBass: defaultSpectralValue,
-            bass: defaultSpectralValue,
-            subMid: defaultSpectralValue,
-            midLow: defaultSpectralValue,
-            midHigh: defaultSpectralValue,
-            high: defaultSpectralValue,
-            subTreble: defaultSpectralValue,
-            air: defaultSpectralValue,
-            vocalPresence: defaultSpectralValue,
-            transientEnergy: defaultSpectralValue,
-            spectralEntropy: defaultSpectralValue, // HiFi AT2030
-            harmonicRatio: defaultSpectralValue // HiFi AT2030
-        };
-        Object.keys(spectralDefaults).forEach(key => {
-            spectralProfile[key] = Number.isFinite(spectralProfile[key]) ?
-                Math.max(0, Math.min(1, spectralProfile[key])) : spectralDefaults[key];
-        });
+		// Validate spectralProfile
+		const spectralProfile = this.spectralProfile || {};
+		const defaultSpectralValue = 0.5;
+		const spectralDefaults = {
+			subBass: defaultSpectralValue,
+			bass: defaultSpectralValue,
+			subMid: defaultSpectralValue,
+			midHigh: defaultSpectralValue,
+			subTreble: defaultSpectralValue,
+			air: defaultSpectralValue,
+			vocalPresence: defaultSpectralValue
+		};
+		Object.keys(spectralDefaults).forEach(key => {
+			spectralProfile[key] = Number.isFinite(spectralProfile[key]) ?
+				Math.max(0, Math.min(1, spectralProfile[key])) :
+				spectralDefaults[key];
+		});
 
-        // Initialize gain and panner nodes
-        this.input = this.context.createGain();
-        this.output = this.context.createGain();
-        this.boostGain = this.context.createGain();
-        this.panner = this.context.createStereoPanner();
+		// Initialize gain and panner nodes
+		this.input = this.context.createGain();
+		this.output = this.context.createGain();
+		this.boostGain = this.context.createGain();
+		this.panner = this.context.createStereoPanner();
 
-        // Calculate vocal and genre adjustments
-        const vocalBoost = this.isVocal ? 1.2 + spectralProfile.vocalPresence * 0.3 : 1.0;
-        const genreFactorMap = {
-            'EDM': 1.2,
-            'DrumAndBass': 1.2,
-            'HipHop': 1.1,
-            'Pop': 1.0,
-            'Bolero': 0.9,
-            'Classical': 0.8,
-            'Jazz': 0.8,
-            'RockMetal': 1.0,
-            'Karaoke': 0.9
-        };
-        const genreFactor = genreFactorMap[this.currentGenre] || 1.0;
-        if (!genreFactorMap[this.currentGenre]) {
-            console.debug('Unknown genre, using default factor:', this.currentGenre || 'Unknown');
-        }
+		// Calculate vocal and genre adjustments
+		const vocalBoost = this.isVocal ?
+			1.2 + spectralProfile.vocalPresence * 0.3 :
+			1.0;
+		const genreFactorMap = {
+			'EDM': 1.2,
+			'DrumAndBass': 1.2,
+			'HipHop': 1.1,
+			'Pop': 1.0,
+			'Bolero': 0.9,
+			'Classical': 0.8,
+			'Jazz': 0.8,
+			'RockMetal': 1.0,
+			'Karaoke': 0.9
+		};
+		const genreFactor = genreFactorMap[this.currentGenre] || 1.0;
+		if (!genreFactorMap[this.currentGenre]) {
+			console.debug('Unknown genre, using default factor:', this.currentGenre || 'Unknown');
+		}
 
-        // Tích hợp PsychoacousticWeight và EmotionTimbreMap (HiFi AT2030)
-        const computePsychoacousticWeight = (freq) => {
-            try {
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                const maskingThreshold = Math.pow(10, -90 / 20) * fletcherMunson(freq);
-                const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                return ensureFinite(maskingThreshold * perceptualSensitivity * deviceAdaptFactor, 1.0);
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { freq, profile, listenerProfile }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
+		// Initialize filters
+		this.bassHighPassFilter = this.context.createBiquadFilter();
+		this.bassHighPassFilter.type = 'highpass';
+		this.bassHighPassFilter.frequency.value = this.highPassFreq || DEFAULT_HIGH_PASS_FREQ;
+		this.bassHighPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
 
-        const computeEmotionTimbreMap = (freq) => {
-            try {
-                const splinePoints = {
-                    warm: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 0.9] },
-                    bright: { freq: [1000, 4000, 8000], gain: [0.9, 1.0, 1.2] },
-                    bassHeavy: { freq: [50, 100, 200], gain: [1.3, 1.2, 1.0] },
-                    vocal: { freq: [200, 1000, 2000], gain: [1.0, 1.2, 1.1] },
-                    proNatural: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] },
-                    karaokeDynamic: { freq: [200, 1000, 2000], gain: [1.1, 1.3, 1.1] },
-                    rockMetal: { freq: [100, 4000, 8000], gain: [1.2, 1.0, 1.15] },
-                    smartStudio: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.05] },
-                    neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                let gain = 1.0;
-                for (let j = 1; j < profilePoints.freq.length; j++) {
-                    if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                        const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                        gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                    }
-                }
-                return ensureFinite(gain * deviceAdaptFactor, 1.0);
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { freq, profile, listenerProfile }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
+		this.highPassFilter = this.context.createBiquadFilter();
+		this.highPassFilter.type = 'highpass';
+		this.highPassFilter.frequency.value = this.highPassFreq || DEFAULT_HIGH_PASS_FREQ;
+		this.highPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
 
-        // Initialize filters with HiFi AT2030 adjustments
-        const performanceFactor = isLowPowerDevice ? 0.8 : 1.0;
-        const listenerAdjust = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
+		this.lowPassFilter = this.context.createBiquadFilter();
+		this.lowPassFilter.type = 'lowpass';
+		this.lowPassFilter.frequency.value = this.lowPassFreq || DEFAULT_LOW_PASS_FREQ;
+		this.lowPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
 
-        this.bassHighPassFilter = this.context.createBiquadFilter();
-        this.bassHighPassFilter.type = 'highpass';
-        this.bassHighPassFilter.frequency.value = this.highPassFreq || DEFAULT_HIGH_PASS_FREQ;
-        this.bassHighPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
+		this.notchFilter = this.context.createBiquadFilter();
+		this.notchFilter.type = 'notch';
+		this.notchFilter.frequency.value = this.notchFreq || DEFAULT_NOTCH_FREQ;
+		this.notchFilter.Q.value = this.notchQ || DEFAULT_NOTCH_Q;
 
-        this.highPassFilter = this.context.createBiquadFilter();
-        this.highPassFilter.type = 'highpass';
-        this.highPassFilter.frequency.value = this.highPassFreq || DEFAULT_HIGH_PASS_FREQ;
-        this.highPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
+		this.formantFilter1 = this.context.createBiquadFilter();
+		this.formantFilter1.type = 'peaking';
+		this.formantFilter1.frequency.value = this.formantF1Freq || DEFAULT_FORMANT_F1_FREQ;
+		this.formantFilter1.Q.value = this.formantQ || DEFAULT_FORMANT_Q;
+		this.formantFilter1.gain.value = 6 * vocalBoost * genreFactor * performanceFactor;
 
-        this.lowPassFilter = this.context.createBiquadFilter();
-        this.lowPassFilter.type = 'lowpass';
-        this.lowPassFilter.frequency.value = this.lowPassFreq || DEFAULT_LOW_PASS_FREQ;
-        this.lowPassFilter.Q.value = this.filterQ || DEFAULT_FILTER_Q;
+		this.formantFilter2 = this.context.createBiquadFilter();
+		this.formantFilter2.type = 'peaking';
+		this.formantFilter2.frequency.value = this.formantF2Freq || DEFAULT_FORMANT_F2_FREQ;
+		this.formantFilter2.Q.value = this.formantQ || DEFAULT_FORMANT_Q;
+		this.formantFilter2.gain.value = 6 * vocalBoost * genreFactor * performanceFactor;
 
-        this.notchFilter = this.context.createBiquadFilter();
-        this.notchFilter.type = 'notch';
-        this.notchFilter.frequency.value = this.notchFreq || DEFAULT_NOTCH_FREQ;
-        this.notchFilter.Q.value = this.notchQ || DEFAULT_NOTCH_Q;
+		this.subBassFilter = this.context.createBiquadFilter();
+		this.subBassFilter.type = 'peaking';
+		this.subBassFilter.frequency.value = 40;
+		this.subBassFilter.Q.value = 1.0;
+		this.subBassFilter.gain.value = 3 * spectralProfile.subBass * genreFactor * performanceFactor;
 
-        this.formantFilter1 = this.context.createBiquadFilter();
-        this.formantFilter1.type = 'peaking';
-        this.formantFilter1.frequency.value = this.formantF1Freq || DEFAULT_FORMANT_F1_FREQ;
-        this.formantFilter1.Q.value = this.formantQ || DEFAULT_FORMANT_Q;
-        this.formantFilter1.gain.value = ensureFinite(6 * vocalBoost * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.formantF1Freq) * computeEmotionTimbreMap(this.formantF1Freq), 6);
+		this.subMidFilter = this.context.createBiquadFilter();
+		this.subMidFilter.type = 'peaking';
+		this.subMidFilter.frequency.value = this.subMidFreq || DEFAULT_SUBMID_FREQ;
+		this.subMidFilter.Q.value = 0.8;
+		this.subMidFilter.gain.value = 2 * spectralProfile.subMid * genreFactor * performanceFactor;
 
-        this.formantFilter2 = this.context.createBiquadFilter();
-        this.formantFilter2.type = 'peaking';
-        this.formantFilter2.frequency.value = this.formantF2Freq || DEFAULT_FORMANT_F2_FREQ;
-        this.formantFilter2.Q.value = this.formantQ || DEFAULT_FORMANT_Q;
-        this.formantFilter2.gain.value = ensureFinite(6 * vocalBoost * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.formantF2Freq) * computeEmotionTimbreMap(this.formantF2Freq), 6);
+		this.midBassFilter = this.context.createBiquadFilter();
+		this.midBassFilter.type = 'peaking';
+		this.midBassFilter.frequency.value = this.midBassFreq || 200;
+		this.midBassFilter.Q.value = 0.7;
+		this.midBassFilter.gain.value = 2 * spectralProfile.bass * genreFactor * performanceFactor;
 
-        this.formantFilter3 = this.context.createBiquadFilter();
-        this.formantFilter3.type = 'peaking';
-        this.formantFilter3.frequency.value = this.formantF3Freq || DEFAULT_FORMANT_F3_FREQ;
-        this.formantFilter3.Q.value = this.formantQ || DEFAULT_FORMANT_Q;
-        this.formantFilter3.gain.value = ensureFinite(6 * vocalBoost * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.formantF3Freq) * computeEmotionTimbreMap(this.formantF3Freq), 6);
+		this.highMidFilter = this.context.createBiquadFilter();
+		this.highMidFilter.type = 'peaking';
+		this.highMidFilter.frequency.value = this.highMidFreq || 2000;
+		this.highMidFilter.Q.value = 0.8;
+		this.highMidFilter.gain.value = 2 * spectralProfile.midHigh * genreFactor * performanceFactor;
 
-        this.subBassFilter = this.context.createBiquadFilter();
-        this.subBassFilter.type = 'peaking';
-        this.subBassFilter.frequency.value = 40;
-        this.subBassFilter.Q.value = 1.0;
-        this.subBassFilter.gain.value = ensureFinite(3 * spectralProfile.subBass * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(40) * computeEmotionTimbreMap(40), 3);
+		this.subTrebleFilter = this.context.createBiquadFilter();
+		this.subTrebleFilter.type = 'peaking';
+		this.subTrebleFilter.frequency.value = this.subTrebleFreq || DEFAULT_SUBTREBLE_FREQ;
+		this.subTrebleFilter.Q.value = 0.8;
+		this.subTrebleFilter.gain.value = 2 * spectralProfile.subTreble * genreFactor * performanceFactor;
 
-        this.subMidFilter = this.context.createBiquadFilter();
-        this.subMidFilter.type = 'peaking';
-        this.subMidFilter.frequency.value = this.subMidFreq || DEFAULT_SUBMID_FREQ;
-        this.subMidFilter.Q.value = 0.8;
-        this.subMidFilter.gain.value = ensureFinite(2 * spectralProfile.subMid * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.subMidFreq) * computeEmotionTimbreMap(this.subMidFreq), 2);
+		this.airFilter = this.context.createBiquadFilter();
+		this.airFilter.type = 'highshelf';
+		this.airFilter.frequency.value = this.airFreq || 10000;
+		this.airFilter.gain.value = 3 * spectralProfile.air * genreFactor * performanceFactor;
 
-        this.midBassFilter = this.context.createBiquadFilter();
-        this.midBassFilter.type = 'peaking';
-        this.midBassFilter.frequency.value = this.midBassFreq || DEFAULT_MIDBASS_FREQ;
-        this.midBassFilter.Q.value = 0.7;
-        this.midBassFilter.gain.value = ensureFinite(2 * spectralProfile.bass * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.midBassFreq) * computeEmotionTimbreMap(this.midBassFreq), 2);
+		// Initialize modulation sources for pitch shifting
+		this.mod1 = this.context.createBufferSource();
+		this.mod2 = this.context.createBufferSource();
+		this.mod3 = this.context.createBufferSource();
+		this.mod4 = this.context.createBufferSource();
 
-        this.highMidFilter = this.context.createBiquadFilter();
-        this.highMidFilter.type = 'peaking';
-        this.highMidFilter.frequency.value = this.highMidFreq || DEFAULT_HIGHMID_FREQ;
-        this.highMidFilter.Q.value = 0.8;
-        this.highMidFilter.gain.value = ensureFinite(2 * spectralProfile.midHigh * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.highMidFreq) * computeEmotionTimbreMap(this.highMidFreq), 2);
+		this.mod1.buffer = this.shiftDownBuffer;
+		this.mod2.buffer = this.shiftDownBuffer;
+		this.mod3.buffer = this.shiftUpBuffer;
+		this.mod4.buffer = this.shiftUpBuffer;
 
-        this.subTrebleFilter = this.context.createBiquadFilter();
-        this.subTrebleFilter.type = 'peaking';
-        this.subTrebleFilter.frequency.value = this.subTrebleFreq || DEFAULT_SUBTREBLE_FREQ;
-        this.subTrebleFilter.Q.value = 0.8;
-        this.subTrebleFilter.gain.value = ensureFinite(2 * spectralProfile.subTreble * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.subTrebleFreq) * computeEmotionTimbreMap(this.subTrebleFreq), 2);
+		this.mod1.loop = true;
+		this.mod2.loop = true;
+		this.mod3.loop = true;
+		this.mod4.loop = true;
 
-        this.airFilter = this.context.createBiquadFilter();
-        this.airFilter.type = 'highshelf';
-        this.airFilter.frequency.value = this.airFreq || DEFAULT_AIR_FREQ;
-        this.airFilter.gain.value = ensureFinite(3 * spectralProfile.air * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(this.airFreq) * computeEmotionTimbreMap(this.airFreq), 3);
+		this.mod1Gain = this.context.createGain();
+		this.mod2Gain = this.context.createGain();
+		this.mod3Gain = this.context.createGain();
+		this.mod3Gain.gain.value = 0;
+		this.mod4Gain = this.context.createGain();
+		this.mod4Gain.gain.value = 0;
 
-        this.lowShelfGain = this.context.createBiquadFilter();
-        this.lowShelfGain.type = 'lowshelf';
-        this.lowShelfGain.frequency.value = 150;
-        this.lowShelfGain.gain.value = ensureFinite(4.5 * spectralProfile.subBass * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(150) * computeEmotionTimbreMap(150), 4.5);
+		this.mod1.connect(this.mod1Gain);
+		this.mod2.connect(this.mod2Gain);
+		this.mod3.connect(this.mod3Gain);
+		this.mod4.connect(this.mod4Gain);
 
-        this.highShelfGain = this.context.createBiquadFilter();
-        this.highShelfGain.type = 'highshelf';
-        this.highShelfGain.frequency.value = 5000;
-        this.highShelfGain.gain.value = ensureFinite(4.5 * spectralProfile.subTreble * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(5000) * computeEmotionTimbreMap(5000), 4.5);
+		this.modGain1 = this.context.createGain();
+		this.modGain2 = this.context.createGain();
 
-        this.midShelfGain = this.context.createBiquadFilter();
-        this.midShelfGain.type = 'peaking';
-        this.midShelfGain.frequency.value = 2000;
-        this.midShelfGain.Q.value = 0.5;
-        this.midShelfGain.gain.value = ensureFinite(4 * spectralProfile.midHigh * genreFactor * performanceFactor * listenerAdjust * computePsychoacousticWeight(2000) * computeEmotionTimbreMap(2000), 4);
+		this.delay1 = this.context.createDelay(MAX_DELAY_TIME);
+		this.delay2 = this.context.createDelay(MAX_DELAY_TIME);
 
-        this.trebleLowPass = this.context.createBiquadFilter();
-        this.trebleLowPass.type = 'lowpass';
-        this.trebleLowPass.frequency.value = 17000;
-        this.trebleLowPass.Q.value = 0.3;
+		this.mod1Gain.connect(this.modGain1);
+		this.mod2Gain.connect(this.modGain2);
+		this.mod3Gain.connect(this.modGain1);
+		this.mod4Gain.connect(this.modGain2);
+		this.modGain1.connect(this.delay1.delayTime);
+		this.modGain2.connect(this.delay2.delayTime);
 
-        // Initialize compressor with profile-based adjustments
-        this.compressor = this.context.createDynamicsCompressor();
-        const compressorSettings = {
-            warm: { threshold: -30, knee: 22, ratio: 8, attack: 0.005, release: isLowPowerDevice ? 0.35 : 0.3 },
-            bright: { threshold: -26, knee: 18, ratio: 12, attack: 0.002, release: isLowPowerDevice ? 0.25 : 0.2 },
-            bassHeavy: { threshold: -32, knee: 24, ratio: 10, attack: 0.004, release: isLowPowerDevice ? 0.4 : 0.35 },
-            vocal: { threshold: -28, knee: 20, ratio: 10, attack: 0.003, release: isLowPowerDevice ? 0.3 : 0.25 },
-            proNatural: { threshold: -30, knee: 22, ratio: 8, attack: 0.005, release: isLowPowerDevice ? 0.35 : 0.3 },
-            karaokeDynamic: { threshold: -28, knee: 20, ratio: 10, attack: 0.003, release: isLowPowerDevice ? 0.3 : 0.25 },
-            rockMetal: { threshold: -26, knee: 18, ratio: 12, attack: 0.002, release: isLowPowerDevice ? 0.25 : 0.2 },
-            smartStudio: { threshold: -30, knee: 22, ratio: 8, attack: 0.005, release: isLowPowerDevice ? 0.35 : 0.3 }
-        }[profile] || { threshold: -28, knee: 20, ratio: 10, attack: 0.003, release: isLowPowerDevice ? 0.3 : 0.25 };
-        this.compressor.threshold.value = compressorSettings.threshold * listenerAdjust;
-        this.compressor.knee.value = compressorSettings.knee * listenerAdjust;
-        this.compressor.ratio.value = compressorSettings.ratio;
-        this.compressor.attack.value = compressorSettings.attack;
-        this.compressor.release.value = compressorSettings.release * deviceAdaptFactor;
+		this.fade1 = this.context.createBufferSource();
+		this.fade2 = this.context.createBufferSource();
+		this.fade1.buffer = this.fadeBuffer;
+		this.fade2.buffer = this.fadeBuffer;
 
-        // Initialize modulation sources for pitch shifting
-        this.mod1 = this.context.createBufferSource();
-        this.mod2 = this.context.createBufferSource();
-        this.mod3 = this.context.createBufferSource();
-        this.mod4 = this.context.createBufferSource();
+		this.fade1.loop = true;
+		this.fade2.loop = true;
 
-        this.mod1.buffer = this.shiftDownBuffer;
-        this.mod2.buffer = this.shiftDownBuffer;
-        this.mod3.buffer = this.shiftUpBuffer;
-        this.mod4.buffer = this.shiftUpBuffer;
+		this.mix1 = this.context.createGain();
+		this.mix2 = this.context.createGain();
+		this.mix1.gain.value = 0;
+		this.mix2.gain.value = 0;
 
-        this.mod1.loop = true;
-        this.mod2.loop = true;
-        this.mod3.loop = true;
-        this.mod4.loop = true;
+		this.fade1.connect(this.mix1.gain);
+		this.fade2.connect(this.mix2.gain);
 
-        this.mod1Gain = this.context.createGain();
-        this.mod2Gain = this.context.createGain();
-        this.mod3Gain = this.context.createGain();
-        this.mod3Gain.gain.value = 0;
-        this.mod4Gain = this.context.createGain();
-        this.mod4Gain.gain.value = 0;
+		this.outputGain = this.context.createGain();
+		this.outputGain.gain.value = 0.8;
 
-        this.mod1.connect(this.mod1Gain);
-        this.mod2.connect(this.mod2Gain);
-        this.mod3.connect(this.mod3Gain);
-        this.mod4.connect(this.mod4Gain);
+		this.lowShelfGain = this.context.createBiquadFilter();
+		this.lowShelfGain.type = 'lowshelf';
+		this.lowShelfGain.frequency.value = 150;
+		this.lowShelfGain.gain.value = 4.5 * spectralProfile.subBass * genreFactor * performanceFactor;
 
-        this.modGain1 = this.context.createGain();
-        this.modGain2 = this.context.createGain();
+		this.highShelfGain = this.context.createBiquadFilter();
+		this.highShelfGain.type = 'highshelf';
+		this.highShelfGain.frequency.value = 5000;
+		this.highShelfGain.gain.value = 4.5 * spectralProfile.subTreble * genreFactor * performanceFactor;
 
-        this.delay1 = this.context.createDelay(MAX_DELAY_TIME);
-        this.delay2 = this.context.createDelay(MAX_DELAY_TIME);
+		this.midShelfGain = this.context.createBiquadFilter();
+		this.midShelfGain.type = 'peaking';
+		this.midShelfGain.frequency.value = 2000;
+		this.midShelfGain.Q.value = 0.5;
+		this.midShelfGain.gain.value = 4 * spectralProfile.midHigh * genreFactor * performanceFactor;
 
-        this.mod1Gain.connect(this.modGain1);
-        this.mod2Gain.connect(this.modGain2);
-        this.mod3Gain.connect(this.modGain1);
-        this.mod4Gain.connect(this.modGain2);
-        this.modGain1.connect(this.delay1.delayTime);
-        this.modGain2.connect(this.delay2.delayTime);
+		this.trebleLowPass = this.context.createBiquadFilter();
+		this.trebleLowPass.type = 'lowpass';
+		this.trebleLowPass.frequency.value = 17000;
+		this.trebleLowPass.Q.value = 0.3;
 
-        this.fade1 = this.context.createBufferSource();
-        this.fade2 = this.context.createBufferSource();
-        this.fade1.buffer = this.fadeBuffer;
-        this.fade2.buffer = this.fadeBuffer;
+		this.compressor = this.context.createDynamicsCompressor();
+		this.compressor.threshold.value = -28;
+		this.compressor.knee.value = 20;
+		this.compressor.ratio.value = 10;
+		this.compressor.attack.value = 0.003;
+		this.compressor.release.value = isLowPowerDevice ? 0.3 : 0.25;
 
-        this.fade1.loop = true;
-        this.fade2.loop = true;
+		// Connect nodes in the signal chain
+		this.input.connect(this.bassHighPassFilter);
+		this.bassHighPassFilter.connect(this.highPassFilter);
+		this.highPassFilter.connect(this.lowShelfGain);
+		this.lowShelfGain.connect(this.subBassFilter);
+		this.subBassFilter.connect(this.subMidFilter);
+		this.subMidFilter.connect(this.midBassFilter);
+		this.midBassFilter.connect(this.midShelfGain);
+		this.midShelfGain.connect(this.highMidFilter);
+		this.highMidFilter.connect(this.formantFilter1);
+		this.formantFilter1.connect(this.formantFilter2);
+		this.formantFilter2.connect(this.delay1);
+		this.formantFilter2.connect(this.delay2);
+		this.delay1.connect(this.mix1);
+		this.delay2.connect(this.mix2);
+		this.mix1.connect(this.boostGain);
+		this.mix2.connect(this.boostGain);
+		this.boostGain.connect(this.panner);
+		this.panner.connect(this.highShelfGain);
+		this.highShelfGain.connect(this.subTrebleFilter);
+		this.subTrebleFilter.connect(this.airFilter);
+		this.airFilter.connect(this.trebleLowPass);
+		this.trebleLowPass.connect(this.lowPassFilter);
+		this.lowPassFilter.connect(this.notchFilter);
+		this.notchFilter.connect(this.outputGain);
+		this.outputGain.connect(this.compressor);
+		this.compressor.connect(this.output);
 
-        this.mix1 = this.context.createGain();
-        this.mix2 = this.context.createGain();
-        this.mix1.gain.value = 0;
-        this.mix2.gain.value = 0;
+		// Validate nodes for spatial audio integration
+		if (!this.boostGain || !this.highShelfGain || !this.subTrebleFilter) {
+			throw new Error('Required nodes for spatial audio integration are missing');
+		}
 
-        this.fade1.connect(this.mix1.gain);
-        this.fade2.connect(this.mix2.gain);
+		// Initialize parameters
+		if (typeof this.setDelay === 'function') {
+			this.setDelay(this.delayTime || DEFAULT_DELAY_TIME);
+		} else {
+			console.warn('setDelay not defined, skipping delay initialization');
+		}
+		if (typeof this.setBoost === 'function') {
+			this.setBoost(0.8);
+		} else {
+			console.warn('setBoost not defined, skipping boost initialization');
+		}
+		if (typeof this.setPan === 'function') {
+			this.setPan(0);
+		} else {
+			console.warn('setPan not defined, skipping pan initialization');
+		}
+		if (typeof this.setPitchOffset === 'function') {
+			this.setPitchOffset(0, false);
+		} else {
+			console.warn('setPitchOffset not defined, skipping pitch offset initialization');
+		}
+		if (this.output && this.output.gain) {
+			this.output.gain.linearRampToValueAtTime(0.7, this.context.currentTime + 0.2);
+			console.debug('Output gain set to 0.69');
+		} else {
+			console.warn('Output gain not set: this.output or this.output.gain is undefined');
+		}
 
-        this.outputGain = this.context.createGain();
-        this.outputGain.gain.value = ensureFinite(0.8 * listenerAdjust * deviceAdaptFactor, 0.8);
-
-        // Connect nodes in the signal chain
-        this.input.connect(this.bassHighPassFilter);
-        this.bassHighPassFilter.connect(this.highPassFilter);
-        this.highPassFilter.connect(this.lowShelfGain);
-        this.lowShelfGain.connect(this.subBassFilter);
-        this.subBassFilter.connect(this.subMidFilter);
-        this.subMidFilter.connect(this.midBassFilter);
-        this.midBassFilter.connect(this.midShelfGain);
-        this.midShelfGain.connect(this.highMidFilter);
-        this.highMidFilter.connect(this.formantFilter1);
-        this.formantFilter1.connect(this.formantFilter2);
-        this.formantFilter2.connect(this.formantFilter3);
-        this.formantFilter3.connect(this.delay1);
-        this.formantFilter3.connect(this.delay2);
-        this.delay1.connect(this.mix1);
-        this.delay2.connect(this.mix2);
-        this.mix1.connect(this.boostGain);
-        this.mix2.connect(this.boostGain);
-        this.boostGain.connect(this.panner);
-        this.panner.connect(this.highShelfGain);
-        this.highShelfGain.connect(this.subTrebleFilter);
-        this.subTrebleFilter.connect(this.airFilter);
-        this.airFilter.connect(this.trebleLowPass);
-        this.trebleLowPass.connect(this.lowPassFilter);
-        this.lowPassFilter.connect(this.notchFilter);
-        this.notchFilter.connect(this.outputGain);
-        this.outputGain.connect(this.compressor);
-        this.compressor.connect(this.output);
-
-        // Validate nodes for spatial audio integration
-        if (!this.boostGain || !this.highShelfGain || !this.subTrebleFilter) {
-            throw new Error('Required nodes for spatial audio integration are missing');
-        }
-
-        // Initialize parameters
-        if (typeof this.setDelay === 'function') {
-            this.setDelay(this.delayTime || DEFAULT_DELAY_TIME);
-        } else {
-            console.warn('setDelay not defined, skipping delay initialization');
-        }
-        if (typeof this.setBoost === 'function') {
-            this.setBoost(0.8 * listenerAdjust * deviceAdaptFactor);
-        } else {
-            console.warn('setBoost not defined, skipping boost initialization');
-        }
-        if (typeof this.setPan === 'function') {
-            this.setPan(0);
-        } else {
-            console.warn('setPan not defined, skipping pan initialization');
-        }
-        if (typeof this.setPitchOffset === 'function') {
-            this.setPitchOffset(0, false);
-        } else {
-            console.warn('setPitchOffset not defined, skipping pitch offset initialization');
-        }
-        if (this.output && this.output.gain) {
-            this.output.gain.linearRampToValueAtTime(0.7 * listenerAdjust * deviceAdaptFactor, this.context.currentTime + 0.2);
-            console.debug('Output gain set to', 0.7 * listenerAdjust * deviceAdaptFactor);
-        } else {
-            console.warn('Output gain not set: this.output or this.output.gain is undefined');
-        }
-
-        // Lưu trạng thái node vào memoryManager
-        const cacheKey = this.generateCacheSignature?.(`nodeState_${this.contextId}`, {
-            profile,
-            listenerProfile,
-            spectralProfile,
-            cpuLoad,
-            isLowPowerDevice
-        }) || `nodeState_${this.contextId}_${profile}`;
-        this.memoryManager?.set(cacheKey, {
-            data: {
-                profile,
-                listenerProfile,
-                spectralProfile,
-                vocalBoost,
-                genreFactor,
-                performanceFactor,
-                deviceAdaptFactor,
-                compressorSettings,
-                timestamp: Date.now()
-            },
-            expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-            priority: 'high'
-        });
-        this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
-
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug('Audio nodes initialized successfully', {
-                sampleRate: this.context.sampleRate,
-                genre: this.currentGenre || 'Unknown',
-                isVocal: this.isVocal,
-                profile,
-                listenerProfile,
-                spectralProfile,
-                isLowPowerDevice,
-                cpuLoad,
-                deviceAdaptFactor,
-                vocalBoost,
-                genreFactor,
-                compressorSettings
-            });
-        }
-    } catch (error) {
-        const errorContext = {
-            contextValid: !!this.context,
-            buffersValid: !!(this.shiftDownBuffer && this.shiftUpBuffer && this.fadeBuffer),
-            spectralProfile: this.spectralProfile,
-            genre: this.currentGenre,
-            isVocal: this.isVocal,
-            sampleRate: this.context?.sampleRate,
-            profile,
-            listenerProfile,
-            isLowPowerDevice,
-            cpuLoad
-        };
-        if (typeof handleError === 'function') {
-            handleError('Error initializing audio nodes', error, errorContext, 'high', { memoryManager: this.memoryManager });
-        } else {
-            console.error('Error initializing audio nodes:', error, errorContext);
-        }
-        throw error;
-    }
+		// Debug logging
+		console.debug('Audio nodes initialized successfully', {
+			sampleRate: this.context.sampleRate,
+			genre: this.currentGenre || 'Unknown',
+			isVocal: this.isVocal,
+			spectralProfile,
+			isLowPowerDevice
+		});
+	} catch (error) {
+		const errorContext = {
+			contextValid: !!this.context,
+			buffersValid: !!(this.shiftDownBuffer && this.shiftUpBuffer && this.fadeBuffer),
+			spectralProfile: this.spectralProfile,
+			genre: this.currentGenre,
+			isVocal: this.isVocal,
+			sampleRate: this.context?.sampleRate,
+			isLowPowerDevice
+		};
+		if (typeof handleError === 'function') {
+			handleError('Error initializing audio nodes', error, errorContext);
+		} else {
+			console.error('Error initializing audio nodes:', error, errorContext);
+		}
+		throw error;
+	}
 };
 
 Jungle.prototype.initializeSpatialAudio = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    try {
-        // Validate AudioContext
-        if (!(this.context instanceof AudioContext)) {
-            throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
-        }
+	try {
+		// Validate AudioContext
+		if (!(this.context instanceof AudioContext)) {
+			throw new Error('Invalid AudioContext: context is not an instance of AudioContext.');
+		}
 
-        // Check device capability
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 2;
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
+		// Check device capability
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 2;
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
 
-        // Initialize spectralProfile with HiFi AT2030
-        const spectralProfile = this.spectralProfile || {
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            spectralFlux: 0.5,
-            spectralEntropy: 0.5,
-            harmonicRatio: 0.5
-        };
+		// Initialize spatial audio properties
+		this.spatialAudioEnabled = isLowPowerDevice ? false : (localStorage.getItem('spatialAudioPreference') === 'true');
+		this.reverbEnabled = false; // Tắt reverb mặc định để giữ âm thanh gốc
+		this.audioFormat = 'stereo'; // Mặc định cho karaoke
+		this.pannerNode = null; // For Atmos
+		this.foaDecoder = null; // For Ambisonics
+		this.binauralBypass = false; // For binaural
+		this.userSpatialAudioPreference = this.spatialAudioEnabled;
+		this.reverbBuffer = null; // Cache impulse response
 
-        // Initialize spatial audio properties
-        this.spatialAudioEnabled = isLowPowerDevice ? false : (localStorage.getItem('spatialAudioPreference') === 'true');
-        this.reverbEnabled = false; // Tắt reverb mặc định để giữ âm thanh gốc
-        this.audioFormat = 'stereo'; // Mặc định cho karaoke
-        this.pannerNode = null; // For Atmos
-        this.foaDecoder = null; // For Ambisonics
-        this.binauralBypass = false; // For binaural
-        this.userSpatialAudioPreference = this.spatialAudioEnabled;
-        this.reverbBuffer = null; // Cache impulse response
+		// Cache spatial audio config
+		const cacheKey = this.generateCacheSignature?.('spatialAudioConfig', {
+			spectralProfile: this.spectralProfile,
+			songStructure: this.memoryManager?.get('lastStructure'),
+			audioFormat: this.audioFormat
+		}) || `spatialAudio_${this.contextId}`;
+		if (this.memoryManager?.get(cacheKey)?.timestamp > Date.now() - 30000) {
+			const cachedConfig = this.memoryManager.get(cacheKey);
+			Object.assign(this, cachedConfig);
+			if (isDebug) console.debug('Reused cached spatial audio config', {
+				cacheKey,
+				cachedConfig
+			});
+			return;
+		}
 
-        // Cache spatial audio config
-        const cacheKey = this.generateCacheSignature?.('spatialAudioConfig', {
-            spectralProfile,
-            songStructure,
-            audioFormat: this.audioFormat,
-            profile,
-            listenerProfile,
-            deviceAdaptFactor
-        }) || `spatialAudio_${this.contextId}`;
-        if (this.memoryManager?.get(cacheKey)?.timestamp > Date.now() - (isLowPowerDevice ? 15000 * deviceAdaptFactor : 30000 * deviceAdaptFactor)) {
-            const cachedConfig = this.memoryManager.get(cacheKey);
-            Object.assign(this, cachedConfig);
-            if (isDebug) console.debug('Reused cached spatial audio config', { cacheKey, cachedConfig });
-            return;
-        }
+		/**
+		 * Toggles spatial audio on/off and dispatches event for UI.
+		 * @param {boolean} enable - True to enable spatial audio, false for karaoke mode.
+		 */
+		this.toggleSpatialAudio = function(enable) {
+			this.userSpatialAudioPreference = !!enable;
+			this.spatialAudioEnabled = !isLowPowerDevice && this.userSpatialAudioPreference && cpuLoad < 0.9;
+			this.configureSignalChain(this.audioFormat);
+			localStorage.setItem('spatialAudioPreference', this.spatialAudioEnabled);
+			if (isDebug) console.debug('Spatial audio preference set:', {
+				spatialAudioEnabled: this.spatialAudioEnabled,
+				cpuLoad,
+				isLowPowerDevice
+			});
+			this.dispatchEvent?.(new CustomEvent('spatialAudioChanged', {
+				detail: {
+					enabled: this.spatialAudioEnabled
+				}
+			}));
+		};
 
-        /**
-         * Toggles spatial audio on/off and dispatches event for UI.
-         * @param {boolean} enable - True to enable spatial audio, false for karaoke mode.
-         */
-        this.toggleSpatialAudio = function(enable) {
-            this.userSpatialAudioPreference = !!enable;
-            this.spatialAudioEnabled = !isLowPowerDevice && this.userSpatialAudioPreference && cpuLoad < 0.9;
-            this.configureSignalChain(this.audioFormat);
-            localStorage.setItem('spatialAudioPreference', this.spatialAudioEnabled);
-            if (isDebug) console.debug('Spatial audio preference set:', {
-                spatialAudioEnabled: this.spatialAudioEnabled,
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile
-            });
-            this.dispatchEvent?.(new CustomEvent('spatialAudioChanged', {
-                detail: { enabled: this.spatialAudioEnabled }
-            }));
-        };
+		/**
+		 * Public API to enable/disable spatial audio.
+		 * @param {boolean} enable - True to enable spatial audio, false for karaoke mode.
+		 */
+		this.setSpatialAudio = function(enable) {
+			this.toggleSpatialAudio(enable);
+		};
 
-        /**
-         * Public API to enable/disable spatial audio.
-         * @param {boolean} enable - True to enable spatial audio, false for karaoke mode.
-         */
-        this.setSpatialAudio = function(enable) {
-            this.toggleSpatialAudio(enable);
-        };
+		/**
+		 * Public API to enable/disable reverb.
+		 * @param {boolean} enable - True to enable reverb, false to disable.
+		 */
+		this.setReverb = function(enable) {
+			this.reverbEnabled = !!enable;
+			this.configureSignalChain(this.audioFormat);
+			localStorage.setItem('reverbPreference', this.reverbEnabled);
+			if (isDebug) console.debug('Reverb preference set:', {
+				reverbEnabled: this.reverbEnabled,
+				cpuLoad
+			});
+			this.dispatchEvent?.(new CustomEvent('reverbChanged', {
+				detail: {
+					enabled: this.reverbEnabled
+				}
+			}));
+		};
 
-        /**
-         * Public API to enable/disable reverb.
-         * @param {boolean} enable - True to enable reverb, false to disable.
-         */
-        this.setReverb = function(enable) {
-            this.reverbEnabled = !!enable;
-            this.configureSignalChain(this.audioFormat);
-            localStorage.setItem('reverbPreference', this.reverbEnabled);
-            if (isDebug) console.debug('Reverb preference set:', {
-                reverbEnabled: this.reverbEnabled,
-                cpuLoad,
-                listenerProfile,
-                deviceAdaptFactor
-            });
-            this.dispatchEvent?.(new CustomEvent('reverbChanged', {
-                detail: { enabled: this.reverbEnabled }
-            }));
-        };
+		/**
+		 * Restores user preferences from localStorage.
+		 */
+		this.restorePreferences = function() {
+			const spatialPref = localStorage.getItem('spatialAudioPreference');
+			const reverbPref = localStorage.getItem('reverbPreference');
+			if (spatialPref !== null) this.setSpatialAudio(spatialPref === 'true');
+			if (reverbPref !== null) this.setReverb(reverbPref === 'true');
+			if (isDebug) console.debug('Restored preferences:', {
+				spatialAudio: this.spatialAudioEnabled,
+				reverb: this.reverbEnabled
+			});
+		};
 
-        /**
-         * Restores user preferences from localStorage.
-         */
-        this.restorePreferences = function() {
-            const spatialPref = localStorage.getItem('spatialAudioPreference');
-            const reverbPref = localStorage.getItem('reverbPreference');
-            if (spatialPref !== null) this.setSpatialAudio(spatialPref === 'true');
-            if (reverbPref !== null) this.setReverb(reverbPref === 'true');
-            if (isDebug) console.debug('Restored preferences:', {
-                spatialAudio: this.spatialAudioEnabled,
-                reverb: this.reverbEnabled,
-                profile,
-                listenerProfile
-            });
-        };
+		/**
+		 * Detects audio format with user feedback integration.
+		 * @param {AudioBuffer|MediaElementAudioSourceNode} input - Audio input source.
+		 * @returns {string} Detected format ('mono', 'stereo', 'binaural', 'ambisonics', 'atmos').
+		 */
+		this.detectAudioFormat = function(input) {
+			const cachedFormat = this.memoryManager?.getBuffer('audioFormat');
+			if (cachedFormat && cachedFormat.expiry > Date.now()) {
+				if (isDebug) console.debug('Using cached audio format:', cachedFormat.format);
+				return cachedFormat.format;
+			}
 
-        /**
-         * Detects audio format with user feedback integration.
-         * @param {AudioBuffer|MediaElementAudioSourceNode} input - Audio input source.
-         * @returns {string} Detected format ('mono', 'stereo', 'binaural', 'ambisonics', 'atmos').
-         */
-        this.detectAudioFormat = function(input) {
-            const cachedFormat = this.memoryManager?.getBuffer('audioFormat');
-            if (cachedFormat && cachedFormat.expiry > Date.now()) {
-                if (isDebug) console.debug('Using cached audio format:', cachedFormat.format);
-                return cachedFormat.format;
-            }
+			let channels = 2;
+			let metadata = {};
+			let title = '';
+			let description = '';
 
-            let channels = 2;
-            let metadata = {};
-            let title = '';
-            let description = '';
+			if (input instanceof AudioBuffer) {
+				channels = input.numberOfChannels || 2;
+				metadata = input.metadata || {};
+			} else if (input instanceof MediaElementAudioSourceNode && input.mediaElement) {
+				const audioTracks = input.mediaElement.audioTracks || [];
+				channels = audioTracks.length > 0 ? audioTracks[0].channelCount || 2 : 2;
+				metadata = input.mediaElement.spatialAudioMetadata || {};
+				title = input.mediaElement.title || input.mediaElement.src || '';
+				description = input.mediaElement.dataset?.youtubeDescription || '';
+			}
 
-            if (input instanceof AudioBuffer) {
-                channels = input.numberOfChannels || 2;
-                metadata = input.metadata || {};
-            } else if (input instanceof MediaElementAudioSourceNode && input.mediaElement) {
-                const audioTracks = input.mediaElement.audioTracks || [];
-                channels = audioTracks.length > 0 ? audioTracks[0].channelCount || 2 : 2;
-                metadata = input.mediaElement.spatialAudioMetadata || {};
-                title = input.mediaElement.title || input.mediaElement.src || '';
-                description = input.mediaElement.dataset?.youtubeDescription || '';
-            }
+			let format = 'stereo';
+			const lowerTitle = title.toLowerCase();
+			const lowerDesc = description.toLowerCase();
+			const spatialKeywords = ['8d audio', '10d audio', 'spatial audio', 'dolby atmos'];
 
-            let format = 'stereo';
-            const lowerTitle = title.toLowerCase();
-            const lowerDesc = description.toLowerCase();
-            const spatialKeywords = ['8d audio', '10d audio', 'spatial audio', 'dolby atmos'];
+			// Tích hợp userFeedback
+			const feedbackList = this.memoryManager?.get('userFeedback') || [];
+			const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
+			if (recentFeedback?.semanticCategory === 'vocal') {
+				format = 'binaural'; // Ưu tiên binaural cho giọng hát
+			} else if (channels === 1) {
+				format = 'mono';
+			} else if (channels === 2 && (metadata.hrtf || spatialKeywords.some(kw => lowerTitle.includes(kw) || lowerDesc.includes(kw)))) {
+				format = 'binaural';
+			} else if (channels === 4 && metadata.format === 'ambisonics') {
+				format = 'ambisonics';
+			} else if (channels >= 6 && (metadata.format === 'atmos' || spatialKeywords.some(kw => lowerTitle.includes(kw) || lowerDesc.includes(kw)))) {
+				format = 'atmos';
+			}
 
-            // Tích hợp userFeedback và spectralProfile
-            const feedbackList = this.memoryManager?.get('userFeedback') || [];
-            const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
-            const isVocalFeedback = recentFeedback?.semanticCategory === 'vocal';
-            const isClarityFeedback = recentFeedback?.semanticCategory === 'clarity';
-            const isBassFeedback = recentFeedback?.semanticCategory === 'bass';
-            if (isVocalFeedback || spectralProfile.vocalPresence > 0.7) {
-                format = 'binaural'; // Ưu tiên binaural cho giọng hát
-            } else if (channels === 1) {
-                format = 'mono';
-            } else if (channels === 2 && (metadata.hrtf || spatialKeywords.some(kw => lowerTitle.includes(kw) || lowerDesc.includes(kw)))) {
-                format = 'binaural';
-            } else if (channels === 4 && metadata.format === 'ambisonics') {
-                format = 'ambisonics';
-            } else if (channels >= 6 && (metadata.format === 'atmos' || spatialKeywords.some(kw => lowerTitle.includes(kw) || lowerDesc.includes(kw)))) {
-                format = 'atmos';
-            } else if (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7) {
-                format = listenerProfile === 'audiophile' ? 'binaural' : 'stereo'; // Tăng chi tiết cho audiophile
-            }
+			if (['binaural', 'ambisonics', 'atmos'].includes(format) && !navigator.mediaDevices?.getUserMedia) {
+				console.warn('Spatial audio may require headphones for optimal experience.');
+			}
 
-            if (['binaural', 'ambisonics', 'atmos'].includes(format) && !navigator.mediaDevices?.getUserMedia) {
-                console.warn('Spatial audio may require headphones for optimal experience.');
-            }
+			this.memoryManager?.allocateBuffer('audioFormat', {
+				format,
+				timestamp: Date.now(),
+				expiry: Date.now() + 30000,
+				priority: 'high'
+			});
+			this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
 
-            this.memoryManager?.allocateBuffer('audioFormat', {
-                format,
-                timestamp: Date.now(),
-                expiry: Date.now() + (isLowPowerDevice ? 15000 * deviceAdaptFactor : 30000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'high'
-            });
-            this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
+			if (isDebug) console.debug('Detected audio format:', {
+				format,
+				channels,
+				metadata,
+				title,
+				description,
+				recentFeedback
+			});
+			return format;
+		};
 
-            if (isDebug) console.debug('Detected audio format:', {
-                format,
-                channels,
-                metadata,
-                title,
-                description,
-                recentFeedback,
-                spectralProfile,
-                listenerProfile
-            });
-            return format;
-        };
+		/**
+		 * Initializes FOA decoder with spectralProfile adjustment.
+		 * @param {AudioNode} inputNode - Input node with 4 channels.
+		 * @returns {AudioNode} Stereo output node.
+		 */
+		this.initializeFOADecoder = function(inputNode) {
+			const splitter = this.context.createChannelSplitter(4);
+			inputNode.connect(splitter);
 
-        /**
-         * Initializes FOA decoder with spectralProfile adjustment.
-         * @param {AudioNode} inputNode - Input node with 4 channels.
-         * @returns {AudioNode} Stereo output node.
-         */
-        this.initializeFOADecoder = function(inputNode) {
-            const splitter = this.context.createChannelSplitter(4);
-            inputNode.connect(splitter);
+			const wGain = this.context.createGain();
+			const xGain = this.context.createGain();
+			const yGain = this.context.createGain();
+			const zGain = this.context.createGain();
 
-            const wGain = this.context.createGain();
-            const xGain = this.context.createGain();
-            const yGain = this.context.createGain();
-            const zGain = this.context.createGain();
+			splitter.connect(wGain, 0);
+			splitter.connect(xGain, 1);
+			splitter.connect(yGain, 2);
+			splitter.connect(zGain, 3);
 
-            splitter.connect(wGain, 0);
-            splitter.connect(xGain, 1);
-            splitter.connect(yGain, 2);
-            splitter.connect(zGain, 3);
+			const merger = this.context.createChannelMerger(2);
+			const leftGain = this.context.createGain();
+			const rightGain = this.context.createGain();
 
-            const merger = this.context.createChannelMerger(2);
-            const leftGain = this.context.createGain();
-            const rightGain = this.context.createGain();
+			// Điều chỉnh dựa trên spectralProfile.vocalPresence
+			const vocalPresence = this.spectralProfile?.vocalPresence || 0.5;
+			wGain.gain.value = 1.0 / Math.sqrt(2);
+			xGain.gain.value = vocalPresence > 0.7 ? 1.2 : 1.0; // Tăng front-back cho vocal
+			yGain.gain.value = 1.0;
+			zGain.gain.value = cpuLoad > 0.8 ? 0.3 : 0.5; // Giảm up-down nếu CPU cao
 
-            // Điều chỉnh dựa trên spectralProfile và listenerProfile
-            const vocalPresence = spectralProfile.vocalPresence || 0.5;
-            const spectralEntropy = spectralProfile.spectralEntropy || 0.5;
-            const harmonicRatio = spectralProfile.harmonicRatio || 0.5;
-            const listenerAdjust = listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.8 : 1.0;
-            wGain.gain.value = 1.0 / Math.sqrt(2) * deviceAdaptFactor;
-            xGain.gain.value = (vocalPresence > 0.7 ? 1.2 : 1.0) * listenerAdjust * deviceAdaptFactor; // Tăng front-back cho vocal
-            yGain.gain.value = (spectralEntropy > 0.7 ? 1.1 : 1.0) * listenerAdjust * deviceAdaptFactor; // Tăng left-right cho âm thanh phức tạp
-            zGain.gain.value = (cpuLoad > 0.8 ? 0.3 : harmonicRatio > 0.7 ? 0.6 : 0.5) * listenerAdjust * deviceAdaptFactor; // Giảm up-down nếu CPU cao
+			wGain.connect(leftGain);
+			xGain.connect(leftGain);
+			yGain.connect(leftGain);
+			zGain.connect(leftGain);
 
-            wGain.connect(leftGain);
-            xGain.connect(leftGain);
-            yGain.connect(leftGain);
-            zGain.connect(leftGain);
+			wGain.connect(rightGain);
+			xGain.connect(rightGain);
+			const yInverter = this.context.createGain();
+			yInverter.gain.value = -1.0;
+			yGain.connect(yInverter);
+			yInverter.connect(rightGain);
+			zGain.connect(rightGain);
 
-            wGain.connect(rightGain);
-            xGain.connect(rightGain);
-            const yInverter = this.context.createGain();
-            yInverter.gain.value = -1.0;
-            yGain.connect(yInverter);
-            yInverter.connect(rightGain);
-            zGain.connect(rightGain);
+			leftGain.connect(merger, 0, 0);
+			rightGain.connect(merger, 0, 1);
 
-            leftGain.connect(merger, 0, 0);
-            rightGain.connect(merger, 0, 1);
+			if (isDebug) console.debug('FOA decoder initialized', {
+				vocalPresence,
+				cpuLoad
+			});
+			return merger;
+		};
 
-            if (isDebug) console.debug('FOA decoder initialized', {
-                vocalPresence,
-                spectralEntropy,
-                harmonicRatio,
-                listenerProfile,
-                cpuLoad,
-                deviceAdaptFactor
-            });
-            return merger;
-        };
+		/**
+		 * Configures signal chain with songStructure integration.
+		 * @param {string} format - Audio format.
+		 */
+		this.configureSignalChain = function(format) {
+			format = format || 'stereo';
+			this.audioFormat = format;
+			const isSpatialFormat = ['binaural', 'ambisonics', 'atmos'].includes(format);
+			this.spatialAudioEnabled = !isLowPowerDevice && this.userSpatialAudioPreference && isSpatialFormat && cpuLoad < 0.9;
 
-        /**
-         * Configures signal chain with songStructure integration.
-         * @param {string} format - Audio format.
-         */
-        this.configureSignalChain = function(format) {
-            format = ['mono', 'stereo', 'binaural', 'ambisonics', 'atmos'].includes(format) ? format : 'stereo'; // Kiểm tra format hợp lệ
-            this.audioFormat = format;
-            const isSpatialFormat = ['binaural', 'ambisonics', 'atmos'].includes(format);
-            this.spatialAudioEnabled = !isLowPowerDevice && this.userSpatialAudioPreference && isSpatialFormat && cpuLoad < 0.9;
+			if (!this.boostGain || !this.highShelfGain || !this.subTrebleFilter) {
+				console.warn('Required nodes missing, skipping signal chain configuration');
+				return;
+			}
 
-            if (!this.boostGain || !this.highShelfGain || !this.subTrebleFilter) {
-                console.warn('Required nodes missing, skipping signal chain configuration');
-                return;
-            }
+			// Disconnect existing nodes
+			if (this.panner) {
+				this.panner.disconnect();
+				this.panner = null;
+			}
+			if (this.pannerNode) {
+				this.pannerNode.disconnect();
+				this.pannerNode = null;
+			}
+			if (this.foaDecoder) {
+				this.foaDecoder.disconnect();
+				this.foaDecoder = null;
+			}
+			if (this.reverb) {
+				this.reverb.disconnect();
+				this.reverb = null;
+			}
+			if (this.reverbGain) {
+				this.reverbGain.disconnect();
+				this.reverbGain = null;
+			}
+			this.boostGain.disconnect();
+			this.highShelfGain.disconnect();
+			this.highShelfGain.connect(this.subTrebleFilter);
 
-            // Disconnect existing nodes
-            if (this.panner) {
-                this.panner.disconnect();
-                this.panner = null;
-            }
-            if (this.pannerNode) {
-                this.pannerNode.disconnect();
-                this.pannerNode = null;
-            }
-            if (this.foaDecoder) {
-                this.foaDecoder.disconnect();
-                this.foaDecoder = null;
-            }
-            if (this.reverb) {
-                this.reverb.disconnect();
-                this.reverb = null;
-            }
-            if (this.reverbGain) {
-                this.reverbGain.disconnect();
-                this.reverbGain = null;
-            }
-            this.boostGain.disconnect();
-            this.highShelfGain.disconnect();
-            this.highShelfGain.connect(this.subTrebleFilter);
+			// Tích hợp songStructure
+			const songStructure = this.memoryManager?.get('lastStructure') || {
+				section: 'unknown'
+			};
+			const panAdjust = songStructure.section === 'chorus' ? 0.2 : 0; // Mở rộng stereo cho chorus
 
-            // Tích hợp songStructure và listenerProfile
-            const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-            const panAdjust = (songStructure.section === 'chorus' ? 0.2 : 0) * (listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.8 : 1.0); // Điều chỉnh theo listenerProfile
+			if (!this.spatialAudioEnabled) {
+				this.panner = this.context.createStereoPanner();
+				this.boostGain.connect(this.panner);
+				this.panner.connect(this.highShelfGain);
+				this.setPan(panAdjust);
+				this.binauralBypass = false;
+				if (isDebug) console.debug('Configured signal chain for karaoke:', {
+					format,
+					panAdjust
+				});
+			} else if (format === 'binaural') {
+				this.binauralBypass = true;
+				this.panner = this.context.createStereoPanner();
+				this.boostGain.connect(this.panner);
+				this.panner.connect(this.highShelfGain);
+				this.setPan(0);
+				if (isDebug) console.debug('Configured signal chain for binaural audio');
+			} else if (format === 'ambisonics') {
+				this.foaDecoder = this.initializeFOADecoder(this.boostGain);
+				this.foaDecoder.connect(this.highShelfGain);
+				if (isDebug) console.debug('Configured signal chain for Ambisonics');
+			} else if (format === 'atmos') {
+				this.pannerNode = this.context.createPanner();
+				this.pannerNode.panningModel = 'HRTF';
+				this.pannerNode.distanceModel = 'inverse';
+				this.pannerNode.refDistance = 1;
+				this.pannerNode.maxDistance = 10000;
+				this.pannerNode.rolloffFactor = songStructure.section === 'chorus' ? 1.2 : 1; // Tăng rolloff cho chorus
+				this.boostGain.connect(this.pannerNode);
+				this.pannerNode.connect(this.highShelfGain);
+				if (isDebug) console.debug('Configured signal chain for Dolby Atmos', {
+					rolloffFactor: this.pannerNode.rolloffFactor
+				});
+			}
 
-            if (!this.spatialAudioEnabled) {
-                this.panner = this.context.createStereoPanner();
-                this.boostGain.connect(this.panner);
-                this.panner.connect(this.highShelfGain);
-                this.setPan(panAdjust);
-                this.binauralBypass = false;
-                if (isDebug) console.debug('Configured signal chain for karaoke:', { format, panAdjust, listenerProfile });
-            } else if (format === 'binaural') {
-                this.binauralBypass = true;
-                this.panner = this.context.createStereoPanner();
-                this.boostGain.connect(this.panner);
-                this.panner.connect(this.highShelfGain);
-                this.setPan(0);
-                if (isDebug) console.debug('Configured signal chain for binaural audio', { listenerProfile });
-            } else if (format === 'ambisonics') {
-                this.foaDecoder = this.initializeFOADecoder(this.boostGain);
-                this.foaDecoder.connect(this.highShelfGain);
-                if (isDebug) console.debug('Configured signal chain for Ambisonics', { listenerProfile });
-            } else if (format === 'atmos') {
-                this.pannerNode = this.context.createPanner();
-                this.pannerNode.panningModel = 'HRTF';
-                this.pannerNode.distanceModel = 'inverse';
-                this.pannerNode.refDistance = 1;
-                this.pannerNode.maxDistance = 10000;
-                this.pannerNode.rolloffFactor = (songStructure.section === 'chorus' ? 1.2 : 1) * (listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0); // Điều chỉnh theo listenerProfile
-                this.boostGain.connect(this.pannerNode);
-                this.pannerNode.connect(this.highShelfGain);
-                if (isDebug) console.debug('Configured signal chain for Dolby Atmos', {
-                    rolloffFactor: this.pannerNode.rolloffFactor,
-                    listenerProfile
-                });
-            }
+			// Chỉ thêm reverb nếu bật rõ ràng
+			if (this.reverbEnabled) {
+				this.reverb = this.context.createConvolver();
+				this.reverb.buffer = this.reverbBuffer || this.createImpulseResponse();
+				this.reverbGain = this.context.createGain();
+				this.reverbGain.gain.value = cpuLoad > 0.9 ? 0.02 : (this.spatialAudioEnabled ? 0.2 : 0.05);
+				this.highShelfGain.connect(this.reverb);
+				this.reverb.connect(this.reverbGain);
+				this.reverbGain.connect(this.subTrebleFilter);
+				if (isDebug) console.debug('Added reverb', {
+					reverbGain: this.reverbGain.gain.value
+				});
+			} else {
+				if (isDebug) console.debug('Reverb disabled to preserve raw audio');
+			}
+		};
 
-            // Chỉ thêm reverb nếu bật rõ ràng
-            if (this.reverbEnabled) {
-                this.reverb = this.context.createConvolver();
-                this.reverb.buffer = this.reverbBuffer || this.createImpulseResponse();
-                this.reverbGain = this.context.createGain();
-                const reverbBaseGain = listenerProfile === 'audiophile' ? 0.25 : listenerProfile === 'casual' ? 0.15 : 0.2;
-                this.reverbGain.gain.value = (cpuLoad > 0.9 ? 0.02 : (this.spatialAudioEnabled ? reverbBaseGain : 0.05)) * deviceAdaptFactor; // Tối ưu reverbGain
-                this.highShelfGain.connect(this.reverb);
-                this.reverb.connect(this.reverbGain);
-                this.reverbGain.connect(this.subTrebleFilter);
-                if (isDebug) console.debug('Added reverb', {
-                    reverbGain: this.reverbGain.gain.value,
-                    listenerProfile,
-                    deviceAdaptFactor
-                });
-            } else {
-                if (isDebug) console.debug('Reverb disabled to preserve raw audio');
-            }
-        };
+		/**
+		 * Creates impulse response for reverb.
+		 * @returns {AudioBuffer} Impulse response buffer.
+		 */
+		this.createImpulseResponse = function() {
+			const isVeryLowPower = navigator.hardwareConcurrency === 1;
+			const length = this.context.sampleRate * (isVeryLowPower ? 0.2 : (isLowPowerDevice ? 0.3 : 0.5));
+			const buffer = this.context.createBuffer(2, length, this.context.sampleRate);
+			for (let channel = 0; channel < 2; channel++) {
+				const data = buffer.getChannelData(channel);
+				for (let i = 0; i < length; i++) {
+					const t = i / length;
+					data[i] = (Math.random() * 2 - 1) * Math.exp(-5 * t);
+				}
+			}
+			this.reverbBuffer = buffer;
+			return buffer;
+		};
 
-        /**
-         * Creates impulse response for reverb.
-         * @returns {AudioBuffer} Impulse response buffer.
-         */
-        this.createImpulseResponse = function() {
-            const isVeryLowPower = navigator.hardwareConcurrency === 1;
-            const baseLength = isVeryLowPower ? 0.2 : (isLowPowerDevice ? 0.3 : 0.5);
-            const length = this.context.sampleRate * baseLength * deviceAdaptFactor; // Tối ưu length
-            const buffer = this.context.createBuffer(2, length, this.context.sampleRate);
-            for (let channel = 0; channel < 2; channel++) {
-                const data = buffer.getChannelData(channel);
-                for (let i = 0; i < length; i++) {
-                    const t = i / length;
-                    data[i] = (Math.random() * 2 - 1) * Math.exp(-5 * t) * (listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0); // Điều chỉnh theo listenerProfile
-                }
-            }
-            this.reverbBuffer = buffer;
-            return buffer;
-        };
+		/**
+		 * Sets spatial position for PannerNode with songStructure.
+		 * @param {number} azimuth - Azimuth angle in radians.
+		 * @param {number} elevation - Elevation angle in radians.
+		 * @param {number} distance - Distance from listener.
+		 */
+		this.setSpatialPosition = function(azimuth, elevation, distance = 1) {
+			if (!this.pannerNode || !this.spatialAudioEnabled) return;
+			azimuth = ensureFinite(azimuth, 0);
+			elevation = ensureFinite(elevation, 0);
+			distance = ensureFinite(distance, 1);
+			const songStructure = this.memoryManager?.get('lastStructure') || {
+				section: 'unknown'
+			};
+			const distanceAdjust = songStructure.section === 'chorus' ? distance * 1.2 : distance; // Tăng khoảng cách cho chorus
+			const x = distanceAdjust * Math.cos(azimuth) * Math.cos(elevation);
+			const y = distanceAdjust * Math.sin(elevation);
+			const z = -distanceAdjust * Math.sin(azimuth) * Math.cos(elevation);
+			this.pannerNode.positionX.setValueAtTime(x, this.context.currentTime);
+			this.pannerNode.positionY.setValueAtTime(y, this.context.currentTime);
+			this.pannerNode.positionZ.setValueAtTime(z, this.context.currentTime);
+			if (isDebug) console.debug('Set spatial position:', {
+				azimuth,
+				elevation,
+				distance: distanceAdjust,
+				x,
+				y,
+				z,
+				songStructure
+			});
+		};
 
-        /**
-         * Sets spatial position for PannerNode with songStructure.
-         * @param {number} azimuth - Azimuth angle in radians.
-         * @param {number} elevation - Elevation angle in radians.
-         * @param {number} distance - Distance from listener.
-         */
-        this.setSpatialPosition = function(azimuth, elevation, distance = 1) {
-            if (!this.pannerNode || !this.spatialAudioEnabled) return;
-            azimuth = ensureFinite(azimuth, 0);
-            elevation = ensureFinite(elevation, 0);
-            distance = ensureFinite(distance, 1);
-            const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-            const listenerAdjust = listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.8 : 1.0;
-            const distanceAdjust = (songStructure.section === 'chorus' ? distance * 1.2 : distance) * listenerAdjust * deviceAdaptFactor; // Tối ưu distance
-            const x = distanceAdjust * Math.cos(azimuth) * Math.cos(elevation);
-            const y = distanceAdjust * Math.sin(elevation);
-            const z = -distanceAdjust * Math.sin(azimuth) * Math.cos(elevation);
-            this.pannerNode.positionX.setValueAtTime(x, this.context.currentTime);
-            this.pannerNode.positionY.setValueAtTime(y, this.context.currentTime);
-            this.pannerNode.positionZ.setValueAtTime(z, this.context.currentTime);
-            if (isDebug) console.debug('Set spatial position:', {
-                azimuth,
-                elevation,
-                distance: distanceAdjust,
-                x,
-                y,
-                z,
-                songStructure,
-                listenerProfile,
-                deviceAdaptFactor
-            });
-        };
+		/**
+		 * Bypasses mono buffers for binaural audio.
+		 * @param {AudioBuffer} input - Input audio buffer.
+		 * @returns {boolean} True if bypassed.
+		 */
+		this.bypassMonoBuffers = function(input) {
+			if (this.binauralBypass && input.numberOfChannels === 2) {
+				this.input.connect(this.bassHighPassFilter);
+				if (isDebug) console.debug('Bypassed mono buffers for binaural audio');
+				return true;
+			}
+			return false;
+		};
 
-        /**
-         * Bypasses mono buffers for binaural audio.
-         * @param {AudioBuffer} input - Input audio buffer.
-         * @returns {boolean} True if bypassed.
-         */
-        this.bypassMonoBuffers = function(input) {
-            if (this.binauralBypass && input.numberOfChannels === 2) {
-                this.input.connect(this.bassHighPassFilter);
-                if (isDebug) console.debug('Bypassed mono buffers for binaural audio', { listenerProfile });
-                return true;
-            }
-            return false;
-        };
+		/**
+		 * Overrides processAudio to handle spatial audio.
+		 * @param {AudioBuffer|MediaElementAudioSourceNode} input - Audio input.
+		 * @param {Object} params - Processing parameters.
+		 */
+		const originalProcessAudio = this.processAudio;
+		this.processAudio = async function(input, params = {}) {
+			const format = this.detectAudioFormat(input);
+			this.configureSignalChain(format);
 
-        /**
-         * Overrides processAudio to handle spatial audio.
-         * @param {AudioBuffer|MediaElementAudioSourceNode} input - Audio input.
-         * @param {Object} params - Processing parameters.
-         */
-        const originalProcessAudio = this.processAudio;
-        this.processAudio = async function(input, params = {}) {
-            const format = this.detectAudioFormat(input);
-            this.configureSignalChain(format);
+			if (format === 'binaural' && this.spatialAudioEnabled) {
+				this.bypassMonoBuffers(input);
+			}
 
-            if (format === 'binaural' && this.spatialAudioEnabled) {
-                this.bypassMonoBuffers(input);
-            }
+			if (format === 'atmos' && this.spatialAudioEnabled && params.azimuth !== undefined && params.elevation !== undefined) {
+				this.setSpatialPosition(
+					ensureFinite(params.azimuth, 0),
+					ensureFinite(params.elevation, 0),
+					ensureFinite(params.distance, 1)
+				);
+			}
 
-            if (format === 'atmos' && this.spatialAudioEnabled && params.azimuth !== undefined && params.elevation !== undefined) {
-                this.setSpatialPosition(
-                    ensureFinite(params.azimuth, 0),
-                    ensureFinite(params.elevation, 0),
-                    ensureFinite(params.distance, 1)
-                );
-            }
+			await originalProcessAudio.call(this, input, params);
+		};
 
-            await originalProcessAudio.call(this, input, params);
-        };
+		/**
+		 * Overrides initializeNodes to integrate spatial audio.
+		 */
+		const originalInitializeNodes = this.initializeNodes;
+		this.initializeNodes = function() {
+			originalInitializeNodes.call(this);
+			this.configureSignalChain(this.audioFormat);
+			if (isDebug) console.debug('Spatial audio initialized within node chain');
+		};
 
-        /**
-         * Overrides initializeNodes to integrate spatial audio.
-         */
-        const originalInitializeNodes = this.initializeNodes;
-        this.initializeNodes = function() {
-            originalInitializeNodes.call(this);
-            this.configureSignalChain(this.audioFormat);
-            if (isDebug) console.debug('Spatial audio initialized within node chain', { profile, listenerProfile });
-        };
+		// Lưu cấu hình vào cache
+		if (this.memoryManager) {
+			this.memoryManager.set(cacheKey, {
+				spatialAudioEnabled: this.spatialAudioEnabled,
+				reverbEnabled: this.reverbEnabled,
+				audioFormat: this.audioFormat,
+				pannerNode: this.pannerNode,
+				foaDecoder: this.foaDecoder,
+				binauralBypass: this.binauralBypass,
+				userSpatialAudioPreference: this.userSpatialAudioPreference,
+				reverbBuffer: this.reverbBuffer
+			}, 'high', {
+				timestamp: Date.now(),
+				expiry: Date.now() + 30000
+			});
+			this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
+		}
 
-        // Lưu cấu hình vào cache
-        if (this.memoryManager) {
-            this.memoryManager.set(cacheKey, {
-                spatialAudioEnabled: this.spatialAudioEnabled,
-                reverbEnabled: this.reverbEnabled,
-                audioFormat: this.audioFormat,
-                pannerNode: this.pannerNode,
-                foaDecoder: this.foaDecoder,
-                binauralBypass: this.binauralBypass,
-                userSpatialAudioPreference: this.userSpatialAudioPreference,
-                reverbBuffer: this.reverbBuffer,
-                listenerProfile,
-                deviceAdaptFactor,
-                timestamp: Date.now(),
-                expiry: Date.now() + (isLowPowerDevice ? 15000 * deviceAdaptFactor : 30000 * deviceAdaptFactor) // Tối ưu expiry
-            }, 'high');
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        // Restore preferences and initialize
-        this.restorePreferences();
-        this.configureSignalChain(this.audioFormat);
-        if (isDebug) console.debug('Spatial audio initialization complete', {
-            audioFormat: this.audioFormat,
-            spatialAudioEnabled: this.spatialAudioEnabled,
-            reverbEnabled: this.reverbEnabled,
-            spectralProfile,
-            songStructure,
-            profile,
-            listenerProfile,
-            deviceAdaptFactor,
-            cacheStats: this.memoryManager?.getCacheStats?.()
-        });
-    } catch (error) {
-        handleError('Error initializing spatial audio:', error, {
-            contextValid: !!this.context,
-            audioFormat: this.audioFormat,
-            sampleRate: this.context?.sampleRate,
-            spatialAudioEnabled: this.spatialAudioEnabled,
-            reverbEnabled: this.reverbEnabled,
-            profile,
-            listenerProfile,
-            cpuLoad,
-            isLowPowerDevice
-        }, 'high', { memoryManager: this.memoryManager });
-        if (this.boostGain && this.highShelfGain) {
-            this.panner = this.context.createStereoPanner();
-            this.boostGain.connect(this.panner);
-            this.panner.connect(this.highShelfGain);
-            this.setPan(0);
-        }
-        throw error;
-    }
+		// Restore preferences and initialize
+		this.restorePreferences();
+		this.configureSignalChain(this.audioFormat);
+		if (isDebug) console.debug('Spatial audio initialization complete', {
+			audioFormat: this.audioFormat,
+			spatialAudioEnabled: this.spatialAudioEnabled,
+			reverbEnabled: this.reverbEnabled,
+			spectralProfile: this.spectralProfile,
+			songStructure: this.memoryManager?.get('lastStructure'),
+			cacheStats: this.memoryManager?.getCacheStats?.()
+		});
+	} catch (error) {
+		console.error('Error initializing spatial audio:', error, {
+			contextValid: !!this.context,
+			audioFormat: this.audioFormat,
+			sampleRate: this.context?.sampleRate,
+			spatialAudioEnabled: this.spatialAudioEnabled,
+			reverbEnabled: this.reverbEnabled
+		});
+		if (this.boostGain && this.highShelfGain) {
+			this.panner = this.context.createStereoPanner();
+			this.boostGain.connect(this.panner);
+			this.panner.connect(this.highShelfGain);
+			this.setPan(0);
+		}
+		throw error;
+	}
 };
 
 Jungle.prototype.stereoMix = function(balance) {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    try {
-        balance = ensureFinite(balance, 0);
-        balance = Math.max(-1, Math.min(1, balance));
+	try {
+		balance = ensureFinite(balance, 0);
+		balance = Math.max(-1, Math.min(1, balance));
 
-        if (!this.panner) {
-            console.warn('Panner node not initialized, skipping stereo mix adjustment');
-            return;
-        }
+		if (!this.panner) {
+			console.warn('Panner node not initialized, skipping stereo mix adjustment');
+			return;
+		}
 
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const fftAnalysis = this.getFFTAnalysis?.() || {};
-        const spectralProfile = {
-            vocalEnergy: fftAnalysis.vocalEnergy || 0.5,
-            transientDensity: fftAnalysis.transientDensity || 0.5,
-            spectralFlux: fftAnalysis.spectralFlux || 0.5,
-            spectralEntropy: fftAnalysis.spectralEntropy || 0.5,
-            harmonicRatio: fftAnalysis.harmonicRatio || 0.5
-        };
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
+		// Lấy thông tin thiết bị và spectral profile
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const fftAnalysis = this.getFFTAnalysis?.() || {};
+		const spectralProfile = {
+			vocalEnergy: fftAnalysis.vocalEnergy || 0.5,
+			transientDensity: fftAnalysis.transientDensity || 0.5,
+			spectralFlux: fftAnalysis.spectralFlux || 0.5
+		};
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const profile = this.profile || 'smartStudio';
 
-        // Tích hợp userFeedback
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
-        const isVocalFeedback = recentFeedback?.semanticCategory === 'vocal';
-        const isClarityFeedback = recentFeedback?.semanticCategory === 'clarity';
-        const feedbackAdjustments = this.applyUserFeedback?.() || { balance: 0, vocalClarity: 0, spatialWidth: 0 };
+		// Tích hợp userFeedback
+		const feedbackList = this.memoryManager?.get('userFeedback') || [];
+		const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
+		const isVocalFeedback = recentFeedback?.semanticCategory === 'vocal';
+		const feedbackAdjustments = this.applyUserFeedback?.() || {
+			balance: 0,
+			vocalClarity: 0,
+			spatialWidth: 0
+		};
 
-        // Điều chỉnh balance dựa trên profile, listenerProfile, và feedback
-        let adjustedBalance = balance;
-        const listenerAdjust = listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.8 : 1.0;
-        if (isVocalFeedback || spectralProfile.vocalEnergy > 0.75 || profile === 'vocal' || profile === 'karaokeDynamic') {
-            adjustedBalance = 0; // Giữ trung tâm cho vocal
-            if (isDebug) console.debug('Forced centered balance due to vocal feedback or profile:', {
-                profile,
-                vocalEnergy: spectralProfile.vocalEnergy,
-                listenerProfile
-            });
-        } else if (profile === 'smartStudio' && (spectralProfile.transientDensity > 0.65 || spectralProfile.spectralEntropy > 0.7)) {
-            adjustedBalance *= 0.9 * listenerAdjust; // Giảm lệch cho transient hoặc âm thanh phức tạp
-            if (isDebug) console.debug('Reduced balance for transient-heavy or complex audio in Smart.S profile:', {
-                transientDensity: spectralProfile.transientDensity,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                listenerProfile
-            });
-        } else if (spectralProfile.harmonicRatio > 0.7 && listenerProfile === 'audiophile') {
-            adjustedBalance *= 1.1 * listenerAdjust; // Tăng chi tiết cho audiophile
-            if (isDebug) console.debug('Increased balance for complex harmonic audio:', {
-                harmonicRatio: spectralProfile.harmonicRatio,
-                listenerProfile
-            });
-        }
-        if (feedbackAdjustments.balance !== 0) {
-            adjustedBalance = Math.max(-1, Math.min(1, adjustedBalance + feedbackAdjustments.balance * 0.3)); // Tích hợp user feedback
-            if (isDebug) console.debug('Adjusted balance based on user feedback:', {
-                feedbackBalance: feedbackAdjustments.balance,
-                listenerProfile
-            });
-        }
+		// Điều chỉnh balance dựa trên profile và feedback
+		let adjustedBalance = balance;
+		if (isVocalFeedback || spectralProfile.vocalEnergy > 0.75 || profile === 'vocal' || profile === 'karaokeDynamic') {
+			adjustedBalance = 0; // Giữ trung tâm cho vocal
+			if (isDebug) console.debug('Forced centered balance due to vocal feedback or profile:', {
+				profile,
+				vocalEnergy: spectralProfile.vocalEnergy
+			});
+		} else if (profile === 'smartStudio' && spectralProfile.transientDensity > 0.65) {
+			adjustedBalance *= 0.9; // Giảm lệch nhẹ để giữ chi tiết transient
+			if (isDebug) console.debug('Reduced balance for transient-heavy audio in Smart.S profile:', {
+				transientDensity: spectralProfile.transientDensity
+			});
+		}
+		if (feedbackAdjustments.balance !== 0) {
+			adjustedBalance = Math.max(-1, Math.min(1, adjustedBalance + feedbackAdjustments.balance * 0.3)); // Tích hợp user feedback
+			if (isDebug) console.debug('Adjusted balance based on user feedback:', {
+				feedbackBalance: feedbackAdjustments.balance
+			});
+		}
 
-        // Tối ưu hóa cho thiết bị yếu
-        if (isLowPowerDevice && cpuLoad > 0.85) {
-            adjustedBalance *= 0.95 * deviceAdaptFactor; // Giảm lệch để giảm tải xử lý
-            if (isDebug) console.debug('Reduced balance adjustment for low-power device:', {
-                cpuLoad,
-                isLowPowerDevice,
-                deviceAdaptFactor
-            });
-        }
+		// Tối ưu hóa cho thiết bị yếu
+		if (isLowPowerDevice && cpuLoad > 0.85) {
+			adjustedBalance *= 0.95; // Giảm lệch để giảm tải xử lý
+			if (isDebug) console.debug('Reduced balance adjustment for low-power device:', {
+				cpuLoad,
+				isLowPowerDevice
+			});
+		}
 
-        // Xử lý stereo mix
-        if (!this.spatialAudioEnabled) {
-            this.panner.pan.linearRampToValueAtTime(adjustedBalance, this.context.currentTime + 0.01); // Thêm ramp nhẹ
-            if (isDebug) console.debug('Stereo mix set for non-spatial audio:', {
-                adjustedBalance,
-                profile,
-                listenerProfile,
-                recentFeedback,
-                deviceAdaptFactor
-            });
-        } else {
-            if (this.audioFormat === 'binaural') {
-                this.panner.pan.linearRampToValueAtTime(0, this.context.currentTime + 0.01); // Giữ trung tâm cho binaural
-                if (isDebug) console.debug('Stereo mix preserved for binaural audio:', {
-                    adjustedBalance,
-                    listenerProfile
-                });
-            } else if (this.foaDecoder || this.pannerNode) {
-                // Bỏ qua điều chỉnh balance cho spatial audio
-                if (isDebug) console.debug('Stereo mix bypassed for spatial audio:', {
-                    audioFormat: this.audioFormat,
-                    adjustedBalance,
-                    listenerProfile
-                });
-            }
-        }
+		// Xử lý stereo mix
+		if (!this.spatialAudioEnabled) {
+			this.panner.pan.linearRampToValueAtTime(adjustedBalance, this.context.currentTime + 0.01); // Thêm ramp nhẹ
+			if (isDebug) console.debug('Stereo mix set for non-spatial audio:', {
+				adjustedBalance,
+				profile,
+				recentFeedback
+			});
+		} else {
+			if (this.audioFormat === 'binaural') {
+				this.panner.pan.linearRampToValueAtTime(0, this.context.currentTime + 0.01); // Giữ trung tâm cho binaural
+				if (isDebug) console.debug('Stereo mix preserved for binaural audio:', {
+					adjustedBalance
+				});
+			} else if (this.foaDecoder || this.pannerNode) {
+				// Bỏ qua điều chỉnh balance cho spatial audio
+				if (isDebug) console.debug('Stereo mix bypassed for spatial audio:', {
+					audioFormat: this.audioFormat,
+					adjustedBalance
+				});
+			}
+		}
 
-        // Lưu stereo mix settings vào memoryManager
-        if (this.memoryManager && spectralProfile.spectralFlux > 0.03) {
-            const cacheKey = this.generateCacheSignature?.(`stereoMix_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                songStructure,
-                spectralProfile,
-                deviceAdaptFactor
-            }) || `stereoMix_${this.contextId}_${profile}_${songStructure.section}_${spectralProfile.spectralFlux.toFixed(2)}`;
-            const cacheData = {
-                data: {
-                    balance: adjustedBalance,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    spectralProfile,
-                    feedbackAdjustments,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice && cpuLoad > 0.85 ? 10000 * deviceAdaptFactor : 15000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'medium'
-            };
-            this.memoryManager.set(cacheKey, cacheData, 'medium');
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 50);
-        }
+		// Lưu stereo mix settings vào memoryManager
+		if (this.memoryManager && spectralProfile.spectralFlux > 0.03) {
+			const cacheKey = `stereoMix_${this.contextId}_${profile}_${songStructure.section}_${spectralProfile.spectralFlux.toFixed(2)}`;
+			const cacheData = {
+				data: {
+					balance: adjustedBalance,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					spectralProfile,
+					feedbackAdjustments
+				},
+				expiry: Date.now() + (isLowPowerDevice && cpuLoad > 0.85 ? 10000 : 15000), // Tối ưu expiry
+				priority: 'medium'
+			};
+			this.memoryManager.set(cacheKey, cacheData, 'medium');
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 50); // Giảm max cache size
+		}
 
-        // Dispatch event
-        this.dispatchEvent?.(new CustomEvent('stereoMixChanged', {
-            detail: { balance: adjustedBalance }
-        }));
+		// Dispatch event
+		this.dispatchEvent?.(new CustomEvent('stereoMixChanged', {
+			detail: {
+				balance: adjustedBalance
+			}
+		}));
 
-    } catch (error) {
-        handleError('Error setting stereo mix:', error, {
-            balance,
-            adjustedBalance,
-            spatialAudioEnabled: this.spatialAudioEnabled,
-            audioFormat: this.audioFormat,
-            profile,
-            listenerProfile,
-            spectralProfile,
-            songStructure,
-            recentFeedback,
-            feedbackAdjustments,
-            cpuLoad,
-            isLowPowerDevice,
-            deviceAdaptFactor
-        }, 'high', { memoryManager: this.memoryManager });
-    }
+	} catch (error) {
+		console.error('Error setting stereo mix:', error, {
+			balance,
+			adjustedBalance,
+			spatialAudioEnabled: this.spatialAudioEnabled,
+			audioFormat: this.audioFormat,
+			profile,
+			spectralProfile,
+			songStructure,
+			recentFeedback,
+			feedbackAdjustments,
+			cpuLoad,
+			isLowPowerDevice
+		});
+	}
 };
 
 /**
@@ -2724,1228 +2629,633 @@ Jungle.prototype.stereoMix = function(balance) {
  * @note Sends initialization parameters to Worker for consistent buffer creation.
  */
 Jungle.prototype.initializeWorker = function() {
-    if (!this.worker) {
-        try {
-            if (!window.Worker) {
-                throw new Error("Web Workers are not supported in this environment.");
-            }
+	if (!this.worker) {
+		try {
+			if (!window.Worker) {
+				throw new Error("Web Workers are not supported in this environment.");
+			}
+			this.worker = new Worker('audioWorker.js');
+			this.worker.postMessage({
+				command: 'init',
+				params: {
+					smoothness: 1.3,
+					vibrance: 0.5,
+					pitchShift: this.currentPitchMult,
+					isVocal: this.isVocal,
+					spectralProfile: this.spectralProfile,
+					currentGenre: this.currentGenre,
+					noiseLevel: this.noiseLevel,
+					wienerGain: this.wienerGain,
+					polyphonicPitches: this.polyphonicPitches,
+					sampleRate: this.context.sampleRate,
+					memoryManager: true,
+					qualityMode: this.qualityMode,
+					userFeedback: this.memoryManager.getBuffer('userFeedback') || {},
+					deviceInfo: {
+						memory: navigator.deviceMemory || 4,
+						hardwareConcurrency: navigator.hardwareConcurrency || 2
+					},
+					contextAnalysis: this.initializeContextAnalyzer ? this.initializeContextAnalyzer().analyze(this) : {},
+					cpuLoadHistory: this.memoryManager.getBuffer('cpuLoadHistory') || []
+				}
+			});
 
-            // Lấy thông tin thiết bị và cấu hình
-            const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-            const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-            const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-            const listenerProfile = this.context?.listenerProfile || 'standard'; // HiFi AT2030
-            const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-            const spectralProfile = this.spectralProfile || {
-                subBass: 0.5,
-                bass: 0.5,
-                subMid: 0.5,
-                midLow: 0.5,
-                midHigh: 0.5,
-                high: 0.5,
-                subTreble: 0.5,
-                air: 0.5,
-                vocalPresence: 0.5,
-                transientEnergy: 0.5,
-                instruments: {},
-                chroma: null,
-                spectralComplexity: 0.5,
-                harmonicRatio: 0.5,
-                spectralEntropy: 0.5 // HiFi AT2030
-            };
+			// Khởi tạo mảng sự kiện nếu chưa có
+			this.eventListeners = this.eventListeners || {};
 
-            // Khởi tạo Worker
-            this.worker = new Worker('audioWorker.js');
-            this.worker.postMessage({
-                command: 'init',
-                params: {
-                    smoothness: 1.5, // Tăng từ 1.3 cho đồng bộ với reset
-                    vibrance: 0.6, // Tăng từ 0.5 cho đồng bộ với reset
-                    pitchShift: this.currentPitchMult,
-                    isVocal: this.isVocal,
-                    spectralProfile: spectralProfile,
-                    currentGenre: this.currentGenre,
-                    noiseLevel: this.noiseLevel,
-                    wienerGain: this.wienerGain,
-                    polyphonicPitches: this.polyphonicPitches,
-                    sampleRate: this.context.sampleRate,
-                    memoryManager: true,
-                    qualityMode: this.qualityMode,
-                    profile,
-                    listenerProfile, // HiFi AT2030
-                    userFeedback: this.memoryManager?.getBuffer('userFeedback') || [],
-                    deviceInfo: {
-                        memory: navigator.deviceMemory || 4,
-                        hardwareConcurrency: navigator.hardwareConcurrency || 2,
-                        deviceAdaptFactor // HiFi AT2030
-                    },
-                    contextAnalysis: this.initializeContextAnalyzer ? this.initializeContextAnalyzer().analyze(this) : {},
-                    cpuLoadHistory: this.memoryManager?.getBuffer('cpuLoadHistory') || []
-                }
-            });
+			// Hàm thay thế cho registerEvent
+			this.registerEvent = this.registerEvent || function(eventName, callback) {
+				this.eventListeners[eventName] = this.eventListeners[eventName] || [];
+				this.eventListeners[eventName].push(callback);
+			};
 
-            // Lưu trạng thái worker vào memoryManager
-            const workerCacheKey = this.generateCacheSignature?.(`workerState_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                cpuLoad,
-                deviceAdaptFactor
-            }) || `workerState_${this.contextId}_${profile}`;
-            this.memoryManager?.set(workerCacheKey, {
-                data: {
-                    initialized: true,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                priority: 'high'
-            });
+			// Hàm kích hoạt sự kiện
+			this.triggerEvent = this.triggerEvent || function(eventName, ...args) {
+				const listeners = this.eventListeners[eventName] || [];
+				listeners.forEach(callback => callback.apply(this, args));
+			};
 
-            // Khởi tạo mảng sự kiện nếu chưa có
-            this.eventListeners = this.eventListeners || {};
+			this.worker.onmessage = (e) => {
+				const {
+					type,
+					data
+				} = e.data;
+				const errorContext = {
+					spectralProfile: this.spectralProfile,
+					wienerGain: this.wienerGain,
+					polyphonicPitches: this.polyphonicPitches,
+					transientBoost: this.transientBoost,
+					bufferTime: this.bufferTime,
+					fadeTime: this.fadeTime,
+					sampleRate: this.context.sampleRate
+				};
 
-            // Hàm thay thế cho registerEvent
-            this.registerEvent = this.registerEvent || function(eventName, callback) {
-                this.eventListeners[eventName] = this.eventListeners[eventName] || [];
-                this.eventListeners[eventName].push(callback);
-            };
+				switch (type) {
+					case "audioResult":
+						const validPitches = Array.isArray(data.polyphonicPitches) ?
+							data.polyphonicPitches.filter(p => Number.isFinite(p.frequency) && p.confidence >= 0 && p.confidence <= 1) :
+							this.polyphonicPitches;
+						const validWienerGain = Number.isFinite(data.wienerGain) && data.wienerGain >= 0 && data.wienerGain <= 2 ?
+							data.wienerGain :
+							this.wienerGain;
+						const validNoiseLevel = data.noiseLevel && typeof data.noiseLevel === 'object' ?
+							data.noiseLevel :
+							{
+								level: data.noiseLevel || 0,
+								midFreq: data.noiseLevel || 0.5
+							};
 
-            // Hàm kích hoạt sự kiện
-            this.triggerEvent = this.triggerEvent || function(eventName, ...args) {
-                const listeners = this.eventListeners[eventName] || [];
-                listeners.forEach(callback => callback.apply(this, args));
-            };
+						this.spectralProfile = data.spectralProfile || this.spectralProfile;
+						this.tempoMemory = data.tempo || this.tempoMemory;
+						this.currentGenre = data.genre || this.currentGenre;
+						this.currentKey = data.key || this.currentKey;
+						this.nextProcessingInterval = data.processingInterval || this.nextProcessingInterval;
+						this.noiseLevel = validNoiseLevel;
+						this.qualityPrediction = data.qualityPrediction || this.qualityPrediction;
+						this.isVocal = data.isVocal !== undefined ? data.isVocal : this.isVocal;
+						this.wienerGain = validWienerGain;
+						this.polyphonicPitches = validPitches;
+						this.transientBoost = data.autoEQ?.transientBoost || this.transientBoost;
 
-            // Xử lý tin nhắn từ Worker
-            this.worker.onmessage = (e) => {
-                const { type, data } = e.data;
-                const errorContext = {
-                    spectralProfile,
-                    wienerGain: this.wienerGain,
-                    polyphonicPitches: this.polyphonicPitches,
-                    transientBoost: this.transientBoost,
-                    bufferTime: this.bufferTime,
-                    fadeTime: this.fadeTime,
-                    sampleRate: this.context.sampleRate,
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor,
-                    cpuLoad
-                };
+						if (data.spectralProfile || data.isVocal || data.currentGenre || data.noiseLevel || data.wienerGain || data.polyphonicPitches) {
+							if (this.getCPULoad() < 0.8) {
+								this.updateBuffers();
+							}
+						}
+						if (data.autoEQ) {
+							this.applyAutoEQ(data.autoEQ);
+						}
+						this.adjustSoundProfileSmartly();
+						break;
+					case "songStructure":
+						if (data.songStructure && Array.isArray(data.songStructure.segments)) {
+							this.memoryManager.buffers.set('songStructure', data.songStructure);
+							if (this.getCPULoad() < 0.7) {
+								this.adjustSoundProfileSmartly({
+									songStructure: data.songStructure
+								});
+							}
+						}
+						break;
+					case "formantParams":
+						if (data.formantParams && Array.isArray(data.formantParams.filters)) {
+							data.formantParams.filters.forEach((filter, index) => {
+								const filterNode = this[`formantFilter${index + 1}`];
+								if (filterNode && Number.isFinite(filter.freq) && Number.isFinite(filter.gain) && Number.isFinite(filter.q)) {
+									filterNode.frequency.value = filter.freq;
+									filterNode.gain.value = filter.gain;
+									filterNode.Q.value = filter.q;
+								}
+							});
+							this.memoryManager.buffers.set('formantParams', data.formantParams);
+						}
+						break;
+					case "fftSettings":
+						if (Number.isFinite(data.fftSize) && data.fftSize >= 256 && data.fftSize <= 32768) {
+							this.setFFTSize(data.fftSize);
+							this.memoryManager.buffers.set('fftSize', data.fftSize);
+						}
+						break;
+					case "bufferFeedback":
+						if (this.getCPULoad() < 0.8 && data.suggestedParams) {
+							const {
+								bufferTime,
+								fadeLength,
+								activeTime
+							} = data.suggestedParams;
+							if (Number.isFinite(bufferTime) && Number.isFinite(fadeLength) && Number.isFinite(activeTime)) {
+								this.adjustBufferParams({
+									bufferTime,
+									fadeLength,
+									activeTime
+								});
+								this.updateBuffers({
+									bufferTime,
+									fadeLength,
+									activeTime
+								});
+							}
+						}
+						break;
+					case "error":
+						console.error("Worker Error:", data);
+						handleError("AudioWorker encountered an error:", new Error(data), errorContext);
+						this.adjustSoundProfileSmartly();
+						break;
+					case "overload":
+						console.warn("Worker overloaded:", data);
+						this.nextProcessingInterval = Math.min(this.nextProcessingInterval * 1.5, 3000);
+						if (this.getCPULoad() > 0.9) {
+							this.worker.postMessage({
+								command: 'pauseAnalysis'
+							});
+						}
+						break;
+					case "skip":
+						console.log("Worker skipped analysis:", data);
+						break;
+					default:
+						console.warn("Unknown message type from Worker:", type);
+				}
+			};
 
-                switch (type) {
-                    case "audioResult":
-                        const validPitches = Array.isArray(data.polyphonicPitches) ?
-                            data.polyphonicPitches.filter(p => Number.isFinite(p.frequency) && p.confidence >= 0 && p.confidence <= 1) :
-                            this.polyphonicPitches;
-                        const validWienerGain = Number.isFinite(data.wienerGain) && data.wienerGain >= 0 && data.wienerGain <= 2 ?
-                            data.wienerGain :
-                            this.wienerGain;
-                        const validNoiseLevel = data.noiseLevel && typeof data.noiseLevel === 'object' ?
-                            data.noiseLevel :
-                            { level: data.noiseLevel || 0, midFreq: data.noiseLevel || 0.5, white: 0.5 };
+			// Khai báo isLowMemory trước setInterval
+			const isLowMemory = navigator.deviceMemory < 4;
+			// Định kỳ gửi userFeedback và contextAnalysis mới
+			this.feedbackInterval = setInterval(() => {
+				const newFeedback = this.memoryManager.getBuffer('userFeedback') || {};
+				const newContext = this.initializeContextAnalyzer ? this.initializeContextAnalyzer().analyze(this) : {};
+				const cpuLoad = this.getCPULoad();
 
-                        // Kiểm tra và cập nhật spectralProfile
-                        const validSpectralProfile = data.spectralProfile && typeof data.spectralProfile === 'object' ?
-                            {
-                                ...this.spectralProfile,
-                                ...data.spectralProfile,
-                                spectralEntropy: Number.isFinite(data.spectralProfile?.spectralEntropy) ? data.spectralProfile.spectralEntropy : this.spectralProfile.spectralEntropy,
-                                harmonicRatio: Number.isFinite(data.spectralProfile?.harmonicRatio) ? data.spectralProfile.harmonicRatio : this.spectralProfile.harmonicRatio
-                            } :
-                            this.spectralProfile;
+				if (cpuLoad < 0.8) {
+					if (Object.keys(newFeedback).length > 0) {
+						this.worker.postMessage({
+							command: 'updateFeedback',
+							params: {
+								userFeedback: newFeedback
+							}
+						});
+					}
+					if (Object.keys(newContext).length > 0) {
+						this.worker.postMessage({
+							command: 'updateContext',
+							params: {
+								contextAnalysis: newContext
+							}
+						});
+					}
+					const cpuLoadHistory = this.memoryManager.getBuffer('cpuLoadHistory') || [];
+					this.worker.postMessage({
+						command: 'updateLoadHistory',
+						params: {
+							cpuLoadHistory
+						}
+					});
+				}
+			}, isLowMemory ? 5000 : 2000); // 5s trên máy yếu, 2s trên máy mạnh
 
-                        this.spectralProfile = validSpectralProfile;
-                        this.tempoMemory = data.tempo || this.tempoMemory;
-                        this.currentGenre = data.genre || this.currentGenre;
-                        this.currentKey = data.key || this.currentKey;
-                        this.nextProcessingInterval = Number.isFinite(data.processingInterval) ? data.processingInterval : this.nextProcessingInterval;
-                        this.noiseLevel = validNoiseLevel;
-                        this.qualityPrediction = data.qualityPrediction || this.qualityPrediction;
-                        this.isVocal = data.isVocal !== undefined ? data.isVocal : this.isVocal;
-                        this.wienerGain = validWienerGain;
-                        this.polyphonicPitches = validPitches;
-                        this.transientBoost = Number.isFinite(data.autoEQ?.transientBoost) ? data.autoEQ.transientBoost : this.transientBoost;
+			// Xử lý sự kiện songChange
+			this.onSongChange = () => {
+				if (this.worker) {
+					this.worker.postMessage({
+						command: 'reset'
+					});
+				}
+			};
+			this.registerEvent('songChange', this.onSongChange);
 
-                        // Chỉ gọi updateBuffers và adjustSoundProfileSmartly nếu cần
-                        if ((data.spectralProfile || data.isVocal || data.currentGenre || data.noiseLevel || data.wienerGain || data.polyphonicPitches) && cpuLoad < 0.8) {
-                            this.updateBuffers();
-                            this.adjustSoundProfileSmartly({ spectralProfile: validSpectralProfile });
-                        }
-                        if (data.autoEQ && cpuLoad < 0.8) {
-                            this.applyAutoEQ(data.autoEQ);
-                        }
-                        break;
-
-                    case "songStructure":
-                        if (data.songStructure && Array.isArray(data.songStructure.segments)) {
-                            this.memoryManager?.buffers.set('songStructure', data.songStructure);
-                            if (cpuLoad < 0.7 && (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7)) {
-                                this.adjustSoundProfileSmartly({ songStructure: data.songStructure });
-                            }
-                        }
-                        break;
-
-                    case "formantParams":
-                        if (data.formantParams && Array.isArray(data.formantParams.filters)) {
-                            data.formantParams.filters.forEach((filter, index) => {
-                                const filterNode = this[`formantFilter${index + 1}`];
-                                if (filterNode && Number.isFinite(filter.freq) && Number.isFinite(filter.gain) && Number.isFinite(filter.q)) {
-                                    filterNode.frequency.value = filter.freq;
-                                    filterNode.gain.value = filter.gain;
-                                    filterNode.Q.value = filter.q;
-                                }
-                            });
-                            this.memoryManager?.buffers.set('formantParams', data.formantParams);
-                        }
-                        break;
-
-                    case "fftSettings":
-                        if (Number.isFinite(data.fftSize) && data.fftSize >= 256 && data.fftSize <= 32768) {
-                            this.setFFTSize(data.fftSize);
-                            this.memoryManager?.buffers.set('fftSize', data.fftSize);
-                        }
-                        break;
-
-                    case "bufferFeedback":
-                        if (cpuLoad < 0.8 && data.suggestedParams) {
-                            const { bufferTime, fadeLength, activeTime } = data.suggestedParams;
-                            if (Number.isFinite(bufferTime) && Number.isFinite(fadeLength) && Number.isFinite(activeTime)) {
-                                this.adjustBufferParams({ bufferTime, fadeLength, activeTime });
-                                this.updateBuffers({ bufferTime, fadeLength, activeTime });
-                            }
-                        }
-                        break;
-
-                    case "error":
-                        console.error("Worker Error:", data);
-                        handleError("AudioWorker encountered an error:", new Error(data), errorContext);
-                        if (cpuLoad < 0.8) {
-                            this.adjustSoundProfileSmartly({ spectralProfile });
-                        }
-                        break;
-
-                    case "overload":
-                        console.warn("Worker overloaded:", data);
-                        this.nextProcessingInterval = Math.min(this.nextProcessingInterval * 1.5, 3000);
-                        if (cpuLoad > 0.9) {
-                            this.worker.postMessage({ command: 'pauseAnalysis' });
-                        }
-                        break;
-
-                    case "skip":
-                        console.log("Worker skipped analysis:", data);
-                        break;
-
-                    default:
-                        console.warn("Unknown message type from Worker:", type);
-                }
-            };
-
-            // Định kỳ gửi userFeedback và contextAnalysis mới
-            const isLowMemory = navigator.deviceMemory < 4;
-            const feedbackIntervalTime = isLowMemory ? 5000 * deviceAdaptFactor : 2000 * deviceAdaptFactor; // Tối ưu thời gian dựa trên deviceAdaptFactor
-            this.feedbackInterval = setInterval(() => {
-                if (!this.memoryManager) return;
-                const newFeedback = this.memoryManager.getBuffer('userFeedback') || [];
-                const newContext = this.initializeContextAnalyzer ? this.initializeContextAnalyzer().analyze(this) : {};
-                const cpuLoadHistory = this.memoryManager.getBuffer('cpuLoadHistory') || [];
-
-                if (cpuLoad < 0.8) {
-                    if (newFeedback.length > 0) {
-                        this.worker.postMessage({
-                            command: 'updateFeedback',
-                            params: { userFeedback: newFeedback }
-                        });
-                    }
-                    if (Object.keys(newContext).length > 0) {
-                        this.worker.postMessage({
-                            command: 'updateContext',
-                            params: { contextAnalysis: newContext }
-                        });
-                    }
-                    if (cpuLoadHistory.length > 0) {
-                        this.worker.postMessage({
-                            command: 'updateLoadHistory',
-                            params: { cpuLoadHistory }
-                        });
-                    }
-                }
-            }, spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7 ? feedbackIntervalTime * 0.8 : feedbackIntervalTime); // Giảm thời gian cho âm thanh phức tạp
-
-            // Xử lý sự kiện songChange
-            this.onSongChange = () => {
-                if (this.worker) {
-                    this.worker.postMessage({
-                        command: 'reset',
-                        params: { profile, listenerProfile }
-                    });
-                }
-            };
-            this.registerEvent('songChange', this.onSongChange);
-
-            // Debug logging
-            const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-            if (isDebug) {
-                console.debug('Worker initialized successfully', {
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor,
-                    cpuLoad,
-                    isLowPowerDevice,
-                    spectralEntropy: spectralProfile.spectralEntropy,
-                    harmonicRatio: spectralProfile.harmonicRatio,
-                    sampleRate: this.context.sampleRate,
-                    qualityMode: this.qualityMode,
-                    cacheStats: this.memoryManager?.getCacheStats?.()
-                });
-            }
-
-        } catch (error) {
-            handleError("Error initializing Worker:", error, {
-                workerSupport: !!window.Worker,
-                workerURL: 'audioWorker.js',
-                bufferTime: this.bufferTime,
-                fadeTime: this.fadeTime,
-                profile,
-                listenerProfile,
-                deviceAdaptFactor,
-                cpuLoad
-            });
-        }
-    }
+		} catch (error) {
+			handleError("Error initializing Worker:", error, {
+				workerSupport: !!window.Worker,
+				workerURL: 'audioWorker.js',
+				bufferTime: this.bufferTime,
+				fadeTime: this.fadeTime
+			});
+		}
+	}
 };
 
 Jungle.prototype.resumeWorkerAnalysis = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    try {
-        if (!this.worker) {
-            throw new Error('Worker is not initialized');
-        }
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio';
-        const listenerProfile = this.context?.listenerProfile || 'standard';
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (navigator.hardwareConcurrency < 4 ? 0.5 : 0.2)));
-
-        this.worker.postMessage({
-            command: 'resumeAnalysis',
-            profile,
-            listenerProfile,
-            timestamp: Date.now()
-        });
-
-        // Lưu trạng thái vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`resumeWorker_${this.contextId}`, { profile, listenerProfile, cpuLoad }) || `resumeWorker_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    command: 'resumeAnalysis',
-                    profile,
-                    listenerProfile,
-                    cpuLoad,
-                    deviceAdaptFactor,
-                    timestamp: Date.now()
-                },
-                expiry: Date.now() + (navigator.hardwareConcurrency < 4 ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                priority: 'medium'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        if (isDebug) {
-            console.debug('Worker analysis resumed', {
-                profile,
-                listenerProfile,
-                cpuLoad: cpuLoad.toFixed(2),
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error resuming worker analysis:', error, {
-            hasWorker: !!this.worker,
-            profile: this.profile,
-            listenerProfile: this.context?.listenerProfile || 'standard',
-            contextId: this.contextId
-        }, 'medium', { memoryManager: this.memoryManager });
-    }
+	if (this.worker) {
+		this.worker.postMessage({
+			command: 'resumeAnalysis'
+		});
+	}
 };
 
 Jungle.prototype.processAudio = async function(input, params = {}) {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    try {
-        if (!this.worker) {
-            await this.initializeWorker();
-        }
-        if (!this.worker) {
-            throw new Error('Worker not initialized');
-        }
-
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio';
-        const listenerProfile = this.context?.listenerProfile || 'standard';
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-        const devicePerf = navigator.hardwareConcurrency < 4 || cpuLoad > 0.8 ? 'low' : navigator.hardwareConcurrency < 8 || cpuLoad > 0.6 ? 'medium' : 'high';
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (devicePerf === 'low' ? 0.5 : 0.2)));
-
-        // Kiểm tra và giới hạn tham số âm thanh
-        const validSizes = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
-        const fftSize = validSizes.includes(params.fftSize) ? params.fftSize : (devicePerf === 'low' ? 1024 : profile === 'vocal' || profile === 'karaokeDynamic' ? 4096 : 2048);
-        const sampleRate = Number.isFinite(params.sampleRate) && params.sampleRate >= 22050 && params.sampleRate <= 192000 ? params.sampleRate : 44100;
-        const compressionThreshold = Number.isFinite(params.compressionThreshold) ? Math.max(-60, Math.min(params.compressionThreshold, -10)) : undefined; // Giới hạn để tránh méo tiếng
-        const eqGains = Array.isArray(params.eqGains) ? params.eqGains.map(g => Math.max(-12, Math.min(g, 12))) : undefined; // Giới hạn gain
-        const noiseGate = Number.isFinite(params.noiseGate) ? Math.max(-80, Math.min(params.noiseGate, -20)) : undefined; // Giới hạn noise gate
-
-        this.worker.postMessage({
-            command: 'process',
-            input: input,
-            params: {
-                sampleRate,
-                fftSize,
-                devicePerf,
-                compressionThreshold,
-                eqGains,
-                noiseGate,
-                azimuth: Number.isFinite(params.azimuth) ? params.azimuth : undefined,
-                elevation: Number.isFinite(params.elevation) ? params.elevation : undefined,
-                sourceVelocity: Number.isFinite(params.sourceVelocity) ? params.sourceVelocity : undefined,
-                qualityMode: this.qualityMode || (devicePerf === 'low' ? 'low' : 'high'),
-                profile,
-                listenerProfile,
-                deviceAdaptFactor
-            }
-        });
-
-        // Lưu trạng thái xử lý vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`processAudio_${this.contextId}`, { profile, listenerProfile, fftSize, devicePerf }) || `processAudio_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    sampleRate,
-                    fftSize,
-                    devicePerf,
-                    compressionThreshold,
-                    eqGains,
-                    noiseGate,
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor,
-                    timestamp: Date.now()
-                },
-                expiry: Date.now() + (devicePerf === 'low' ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                priority: 'high'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        if (isDebug) {
-            console.debug('Audio processing started', {
-                sampleRate,
-                fftSize,
-                devicePerf,
-                compressionThreshold,
-                eqGains,
-                noiseGate,
-                profile,
-                listenerProfile,
-                cpuLoad: cpuLoad.toFixed(2),
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error processing audio:', error, {
-            hasWorker: !!this.worker,
-            profile: this.profile,
-            listenerProfile: this.context?.listenerProfile || 'standard',
-            params,
-            contextId: this.contextId
-        }, 'high', { memoryManager: this.memoryManager });
-        console.warn('Worker not initialized, skipping audio processing');
-    }
+	if (!this.worker) {
+		await this.initializeWorker();
+	}
+	if (this.worker) {
+		this.worker.postMessage({
+			command: "process",
+			input: input,
+			params: {
+				sampleRate: params.sampleRate || 44100,
+				fftSize: params.fftSize || 2048,
+				devicePerf: params.devicePerf || "medium",
+				compressionThreshold: params.compressionThreshold,
+				eqGains: params.eqGains,
+				noiseGate: params.noiseGate,
+				azimuth: params.azimuth,
+				elevation: params.elevation,
+				sourceVelocity: params.sourceVelocity,
+				qualityMode: this.qualityMode
+			}
+		});
+	} else {
+		console.warn("Worker not initialized, skipping audio processing");
+	}
 };
 
 Jungle.prototype.adjustSoundProfileSmartly = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    try {
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio';
-        const listenerProfile = this.context?.listenerProfile || 'standard';
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (navigator.hardwareConcurrency < 4 ? 0.5 : 0.2)));
-
-        // Điều chỉnh transientBoost thông minh
-        let transientBoost = 1.0;
-        if (this.polyphonicPitches?.length > 0) {
-            const avgConfidence = this.polyphonicPitches.reduce((sum, p) => sum + p.confidence, 0) / this.polyphonicPitches.length;
-            transientBoost = avgConfidence > 0.7 ? 1.5 : avgConfidence > 0.5 ? 1.2 : 1.0;
-            if (this.spectralProfile?.spectralEntropy > 0.7 || this.spectralProfile?.harmonicRatio > 0.7) {
-                transientBoost = Math.min(transientBoost * 1.1, 1.5); // Giới hạn tối đa 1.5
-            }
-            if (profile === 'bassHeavy' || profile === 'rockMetal') {
-                transientBoost = Math.min(transientBoost * 1.2, 1.5); // Tăng nhẹ cho bass-heavy
-            } else if (profile === 'vocal' || profile === 'karaokeDynamic') {
-                transientBoost = Math.min(transientBoost * 0.9, 1.3); // Giảm nhẹ cho vocal
-            }
-            if (listenerProfile === 'audiophile') {
-                transientBoost = Math.min(transientBoost * 1.1, 1.5); // Tăng chi tiết
-            } else if (listenerProfile === 'casual') {
-                transientBoost = Math.max(transientBoost * 0.9, 0.8); // Giảm độ nhạy
-            }
-            transientBoost *= deviceAdaptFactor; // Tối ưu cho thiết bị yếu
-        }
-        this.transientBoost = Number.isFinite(transientBoost) ? transientBoost : 1.0;
-
-        // Khởi tạo spectralProfile với các tham số đầy đủ
-        this.spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5
-        };
-
-        // Khởi tạo các tham số khác
-        this.currentGenre = this.currentGenre || 'Pop';
-        this.noiseLevel = this.noiseLevel || {
-            level: 0,
-            midFreq: 0.5,
-            white: 0.5
-        };
-        this.qualityPrediction = this.qualityPrediction || {
-            score: 0,
-            recommendations: []
-        };
-        this.tempoMemory = this.tempoMemory || 120;
-        this.currentKey = this.currentKey || {
-            key: 'C',
-            confidence: 0,
-            isMajor: true
-        };
-        this.isVocal = this.isVocal || profile === 'vocal';
-        this.wienerGain = Number.isFinite(this.wienerGain) ? Math.max(0.5, Math.min(this.wienerGain, 1.5)) : 1.0; // Giới hạn để tránh méo tiếng
-
-        // Lưu trạng thái vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`soundProfile_${this.contextId}`, { profile, listenerProfile, transientBoost }) || `soundProfile_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    transientBoost: this.transientBoost,
-                    spectralProfile: this.spectralProfile,
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor,
-                    timestamp: Date.now()
-                },
-                expiry: Date.now() + (navigator.hardwareConcurrency < 4 ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                priority: 'medium'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        if (isDebug) {
-            console.debug('Sound profile adjusted smartly', {
-                transientBoost: this.transientBoost,
-                spectralProfile: this.spectralProfile,
-                profile,
-                listenerProfile,
-                cpuLoad: cpuLoad.toFixed(2),
-                deviceAdaptFactor,
-                spectralEntropy: this.spectralProfile?.spectralEntropy,
-                harmonicRatio: this.spectralProfile?.harmonicRatio,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error adjusting sound profile:', error, {
-            profile: this.profile,
-            listenerProfile: this.context?.listenerProfile || 'standard',
-            polyphonicPitches: this.polyphonicPitches?.length || 0,
-            contextId: this.contextId
-        }, 'medium', { memoryManager: this.memoryManager });
-        this.transientBoost = 1.0; // Fallback
-    }
+	if (this.polyphonicPitches?.length > 0) {
+		const avgConfidence = this.polyphonicPitches.reduce((sum, p) => sum + p.confidence, 0) / this.polyphonicPitches.length;
+		this.transientBoost = avgConfidence > 0.5 ? 1.2 : 1.0;
+		console.debug("Adjusted transientBoost:", this.transientBoost);
+	}
+	this.spectralProfile = this.spectralProfile || {
+		subBass: 0.5,
+		bass: 0.5,
+		mid: 0.5,
+		high: 0.5
+	};
+	this.currentGenre = this.currentGenre || "Pop";
+	this.noiseLevel = this.noiseLevel || {
+		level: 0,
+		midFreq: 0.5
+	};
+	this.qualityPrediction = this.qualityPrediction || {
+		recommendations: []
+	};
+	this.tempoMemory = this.tempoMemory || 120;
+	this.currentKey = this.currentKey || "C";
+	this.isVocal = this.isVocal || false;
+	this.wienerGain = this.wienerGain || 1.0;
 };
 
 Jungle.prototype.startAudioAnalysis = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    try {
-        if (!this._analyser) {
-            this._analyser = this.context.createAnalyser();
-            const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio';
-            const listenerProfile = this.context?.listenerProfile || 'standard';
-            const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-            const devicePerf = navigator.hardwareConcurrency < 4 || cpuLoad > 0.8 ? 'low' : navigator.hardwareConcurrency < 8 || cpuLoad > 0.6 ? 'medium' : 'high';
-            const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (devicePerf === 'low' ? 0.5 : 0.2)));
+	if (!this._analyser) {
+		this._analyser = this.context.createAnalyser();
+		this._analyser.fftSize = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4 ? 1024 : 2048;
+		this.outputGain.connect(this._analyser);
+	}
 
-            // Đồng bộ fftSize với setFFTSize
-            const validSizes = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
-            const profileAdjust = {
-                warm: 2048,
-                bright: 4096,
-                bassHeavy: 1024,
-                vocal: 4096,
-                proNatural: 2048,
-                karaokeDynamic: 4096,
-                rockMetal: 2048,
-                smartStudio: 2048
-            };
-            let fftSize = profileAdjust[profile] || 2048;
-            if (devicePerf === 'low') fftSize = Math.min(fftSize, 1024);
-            else if (devicePerf === 'medium') fftSize = Math.min(fftSize, 2048);
-            if (listenerProfile === 'audiophile') fftSize = Math.min(fftSize * 1.5, 4096);
-            else if (listenerProfile === 'casual') fftSize = Math.max(fftSize * 0.8, 1024);
-            fftSize = validSizes.reduce((prev, curr) => Math.abs(curr - fftSize) < Math.abs(prev - fftSize) ? curr : prev);
-            this._analyser.fftSize = fftSize;
-            this._analyser.smoothingTimeConstant = profile === 'vocal' || profile === 'karaokeDynamic' ? 0.65 : 0.8;
-            this.outputGain.connect(this._analyser);
+	const devicePerf = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4 ? "medium" : "high";
 
-            if (isDebug) {
-                console.debug('Analyser initialized', { fftSize, profile, listenerProfile, devicePerf });
-            }
-        }
+	if (this.audioAnalysisInterval) {
+		clearInterval(this.audioAnalysisInterval);
+	}
 
-        const devicePerf = navigator.hardwareConcurrency < 4 || this.getCPULoad() > 0.8 ? 'low' : navigator.hardwareConcurrency < 8 || this.getCPULoad() > 0.6 ? 'medium' : 'high';
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (this.getCPULoad() * 0.3) * (devicePerf === 'low' ? 0.5 : 0.2)));
+	const adjustInterval = () => {
+		let interval = this.nextProcessingInterval;
+		const cpuLoad = this.getCPULoad();
+		const spectralComplexity = this.spectralProfile?.spectralFlatness || 0.5;
+		if (devicePerf === "medium" || cpuLoad > 0.8) {
+			interval = Math.min(interval * 2, 2000);
+		} else if (spectralComplexity < 0.3) {
+			interval *= 1.2;
+		}
+		return Math.round(interval);
+	};
 
-        if (this.audioAnalysisInterval) {
-            clearInterval(this.audioAnalysisInterval);
-        }
+	this.audioAnalysisInterval = setInterval(() => {
+		const bufferLength = this._analyser.frequencyBinCount;
+		const timeData = new Float32Array(bufferLength);
+		this._analyser.getFloatTimeDomainData(timeData);
 
-        const adjustInterval = () => {
-            let interval = this.nextProcessingInterval || 800;
-            const cpuLoad = this.getCPULoad();
-            const spectralComplexity = this.spectralProfile?.spectralFlatness || 0.5;
-            const spectralEntropy = this.spectralProfile?.spectralEntropy || 0.5;
-            if (devicePerf === 'low' || cpuLoad > 0.8) {
-                interval = Math.min(interval * 2, 2000);
-            } else if (spectralComplexity < 0.3 || spectralEntropy < 0.4) {
-                interval *= 1.2;
-            } else if (spectralEntropy > 0.7) {
-                interval *= 0.9; // Giảm interval cho âm thanh phức tạp
-            }
-            if (this.context?.listenerProfile === 'audiophile') {
-                interval *= 0.8; // Tăng tần suất phân tích
-            } else if (this.context?.listenerProfile === 'casual') {
-                interval *= 1.2; // Giảm tần suất
-            }
-            return Math.round(interval * deviceAdaptFactor);
-        };
-
-        this.audioAnalysisInterval = setInterval(() => {
-            try {
-                const bufferLength = this._analyser.frequencyBinCount;
-                const timeData = new Float32Array(bufferLength);
-                this._analyser.getFloatTimeDomainData(timeData);
-
-                if (this.worker) {
-                    this.worker.postMessage({
-                        type: 'analyzeAudio',
-                        timeData: timeData,
-                        sampleRate: this.context.sampleRate,
-                        bufferLength: bufferLength,
-                        cpuLoad: this.getCPULoad(),
-                        pitchMult: this.currentPitchMult || 1,
-                        devicePerf: devicePerf,
-                        qualityMode: this.qualityMode || (devicePerf === 'low' ? 'low' : 'high'),
-                        profile: this.profile,
-                        listenerProfile: this.context?.listenerProfile || 'standard'
-                    });
-
-                    // Lưu trạng thái phân tích vào memoryManager
-                    if (this.memoryManager) {
-                        const cacheKey = this.generateCacheSignature?.(`audioAnalysis_${this.contextId}`, {
-                            profile: this.profile,
-                            listenerProfile: this.context?.listenerProfile || 'standard',
-                            bufferLength,
-                            devicePerf
-                        }) || `audioAnalysis_${this.contextId}_${this.profile}`;
-                        this.memoryManager.set(cacheKey, {
-                            data: {
-                                bufferLength,
-                                sampleRate: this.context.sampleRate,
-                                cpuLoad: this.getCPULoad(),
-                                devicePerf,
-                                profile: this.profile,
-                                listenerProfile: this.context?.listenerProfile || 'standard',
-                                deviceAdaptFactor,
-                                timestamp: Date.now()
-                            },
-                            expiry: Date.now() + (devicePerf === 'low' ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                            priority: 'medium'
-                        });
-                        this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-                    }
-                } else {
-                    console.warn('Worker not initialized, skipping audio analysis');
-                    this.initializeWorker();
-                }
-            } catch (error) {
-                handleError('Error during audio analysis:', error, {
-                    hasWorker: !!this.worker,
-                    profile: this.profile,
-                    listenerProfile: this.context?.listenerProfile || 'standard',
-                    bufferLength: this._analyser?.frequencyBinCount,
-                    contextId: this.contextId
-                }, 'medium', { memoryManager: this.memoryManager });
-            }
-        }, adjustInterval());
-
-        if (isDebug) {
-            console.debug('Audio analysis started', {
-                interval: adjustInterval(),
-                fftSize: this._analyser.fftSize,
-                profile: this.profile,
-                listenerProfile: this.context?.listenerProfile || 'standard',
-                devicePerf,
-                cpuLoad: this.getCPULoad().toFixed(2),
-                deviceAdaptFactor,
-                spectralEntropy: this.spectralProfile?.spectralEntropy,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error starting audio analysis:', error, {
-            hasAnalyser: !!this._analyser,
-            profile: this.profile,
-            listenerProfile: this.context?.listenerProfile || 'standard',
-            contextId: this.contextId
-        }, 'high', { memoryManager: this.memoryManager });
-    }
+		if (this.worker) {
+			try {
+				this.worker.postMessage({
+					type: "analyzeAudio",
+					timeData: timeData,
+					sampleRate: this.context.sampleRate,
+					bufferLength: bufferLength,
+					cpuLoad: this.getCPULoad(),
+					pitchMult: this.currentPitchMult || 1,
+					devicePerf: devicePerf,
+					qualityMode: this.qualityMode
+				});
+			} catch (error) {
+				handleError("Error sending message to Worker:", error);
+			}
+		} else {
+			console.warn("Worker not initialized, skipping audio analysis");
+			this.initializeWorker();
+		}
+	}, adjustInterval());
 };
 
 Jungle.prototype.applyAutoEQ = function(eqSettings) {
-    try {
-        // Kiểm tra AudioContext và Jungle library
-        if (!this.context || !(this.context instanceof (window.AudioContext || window.webkitAudioContext))) {
-            throw new Error('Invalid or missing AudioContext');
-        }
-        if (typeof Jungle === 'undefined') {
-            throw new Error('Jungle library is not loaded');
-        }
+	try {
+		const currentTime = this.context.currentTime;
+		const absMult = Math.abs(this.currentPitchMult || 0);
+		const rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME);
 
-        const currentTime = this.context.currentTime;
-        const absMult = Math.abs(this.currentPitchMult || 0);
-        const rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME);
+		// Lấy thông tin thiết bị và spectral profile
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const fftAnalysis = this.getFFTAnalysis?.() || {};
+		const spectralProfile = {
+			subBassEnergy: fftAnalysis.subBassEnergy || 0.5,
+			bassEnergy: fftAnalysis.bassEnergy || 0.5,
+			midEnergy: fftAnalysis.midEnergy || 0.5,
+			highMidEnergy: fftAnalysis.highMidEnergy || 0.5,
+			trebleEnergy: fftAnalysis.trebleEnergy || 0.5,
+			airEnergy: fftAnalysis.airEnergy || 0.5,
+			vocalEnergy: fftAnalysis.vocalEnergy || 0.5,
+			transientDensity: fftAnalysis.transientDensity || 0.5,
+			harmonicRatio: fftAnalysis.harmonicRatio || 0.5,
+			spectralComplexity: fftAnalysis.spectralEntropy || 0.5,
+			spectralFlux: fftAnalysis.spectralFlux || 0.5
+		};
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const profile = this.profile || 'smartStudio';
 
-        // Khai báo isDebug một lần duy nhất
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		// Lấy userFeedback từ memoryManager
+		const feedbackList = this.memoryManager?.get('userFeedback') || [];
+		const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
+		const isVocalFeedback = recentFeedback?.semanticCategory === 'vocal';
 
-        // Lấy thông tin thiết bị và spectral profile
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const fftAnalysis = this.getFFTAnalysis?.() || {};
-        const spectralProfile = {
-            subBassEnergy: fftAnalysis.subBassEnergy || 0.5,
-            bassEnergy: fftAnalysis.bassEnergy || 0.5,
-            midEnergy: fftAnalysis.midEnergy || 0.5,
-            highMidEnergy: fftAnalysis.highMidEnergy || 0.5,
-            trebleEnergy: fftAnalysis.trebleEnergy || 0.5,
-            airEnergy: fftAnalysis.airEnergy || 0.5,
-            vocalEnergy: fftAnalysis.vocalEnergy || 0.5,
-            transientDensity: fftAnalysis.transientDensity || 0.5,
-            harmonicRatio: fftAnalysis.harmonicRatio || 0.5,
-            spectralComplexity: fftAnalysis.spectralEntropy || 0.5,
-            spectralFlux: fftAnalysis.spectralFlux || 0.5,
-            profile: this.profile || 'smartStudio'
-        };
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const profile = spectralProfile.profile;
+		// Wiener và pitch adjustment
+		const wienerThresholdAdjust = this.wienerGain < 0.8 ? -14 * (1 - this.wienerGain) : 0; // Tăng từ -12
+		const pitchAdjust = Math.min(7, absMult * 14); // Tăng từ 6/12
 
-        // Tính toán midBalance để tránh bass lấn át
-        const midBalance = spectralProfile.midEnergy < 0.5 && spectralProfile.bassEnergy > 0.7 ? 1.2 : 1.0;
+		// Compressor settings
+		this.compressor.threshold.linearRampToValueAtTime(
+			ensureFinite(eqSettings.clarityGain, 0) < 2 ? -24 + wienerThresholdAdjust - pitchAdjust : -20 + wienerThresholdAdjust - pitchAdjust, // Tăng từ -26/-22
+			currentTime + rampTime
+		);
+		this.compressor.ratio.linearRampToValueAtTime(
+			10 + absMult * 3, // Tăng từ 9/2.5
+			currentTime + rampTime
+		);
+		this.compressor.attack.linearRampToValueAtTime(
+			DEFAULT_COMPRESSOR_ATTACK, // 0.005
+			currentTime + rampTime
+		);
+		this.compressor.release.linearRampToValueAtTime(
+			DEFAULT_COMPRESSOR_RELEASE, // 0.2
+			currentTime + rampTime
+		);
 
-        // Initialize AT2030 parameters
-        const at2030Config = {
-            enabled: spectralProfile.vocalEnergy > 0.45 || profile === 'vocal' || profile === 'karaokeDynamic' || absMult > 0,
-            formantScale: 1.0 + (this.currentPitchMult || 0) * 0.025,
-            harmonicBoost: profile === 'bassHeavy' ? 1.2 : profile === 'vocal' ? 1.3 : 1.0,
-            transientSculpt: profile === 'rockMetal' || profile === 'bassHeavy' ? 1.4 : 1.1,
-            phaseLockFactor: this.qualityMode === 'high' ? 1.0 : 0.9,
-            emotionalVector: profile === 'warm' ? 0.9 : profile === 'rockMetal' ? 1.1 : 1.0,
-            deviceAdaptFactor: 1.0 - (cpuLoad * 0.2) * (isLowPowerDevice ? 0.35 : 0.1),
-            listenerProfile: this.listenerProfile || 'standard', // Thêm: standard, audiophile, casual
-            timbreProfile: profile // Thêm: warm, bright, vocal, etc.
-        };
-        at2030Config.formantScale = Math.max(0.75, Math.min(1.35, at2030Config.formantScale));
+		// Transient boost adjustment
+		let transientBoostAdjust = Math.min(ensureFinite(eqSettings.transientBoost, DEFAULT_TRANSIENT_BOOST) * 2, 5); // Tăng từ 1.8/4
+		if (spectralProfile.transientDensity > 0.6 || spectralProfile.spectralFlux > 0.65 || profile === 'rockMetal' || profile === 'vocal') {
+			transientBoostAdjust *= 1.25; // Tăng từ 1.2
+		}
+		if (profile === 'bright' || profile === 'smartStudio') {
+			transientBoostAdjust *= 1.1; // Thêm hỗ trợ Bright, Smart.S
+		}
 
-        // Thêm hàm tính SpectralAttention
-        const computeSpectralAttention = () => {
-            try {
-                const fftSize = fftAnalysis.fftSize || 2048;
-                const spectralAttention = new Float32Array(fftSize / 2);
-                let spectralFlux = spectralProfile.spectralFlux || 0.5;
-                let sumExp = 0;
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const energy = fftAnalysis.magnitudes ? fftAnalysis.magnitudes[i] * fftAnalysis.magnitudes[i] : 0.5;
-                    spectralAttention[i] = Math.exp(energy * spectralFlux);
-                    sumExp += spectralAttention[i];
-                }
-                for (let i = 0; i < fftSize / 2; i++) {
-                    spectralAttention[i] = ensureFinite(spectralAttention[i] / (sumExp + 1e-10), 1.0);
-                }
-                // Tăng attention cho vocal và transient
-                if (profile === 'vocal' || spectralProfile.vocalEnergy > 0.7) {
-                    for (let i = Math.floor(200 * fftSize / this.context.sampleRate); i < Math.floor(2000 * fftSize / this.context.sampleRate); i++) {
-                        spectralAttention[i] *= 1.2;
-                    }
-                }
-                if (profile === 'rockMetal' || spectralProfile.transientDensity > 0.8) {
-                    for (let i = 0; i < Math.floor(100 * fftSize / this.context.sampleRate); i++) {
-                        spectralAttention[i] *= 1.15;
-                    }
-                }
-                return spectralAttention;
-            } catch (error) {
-                handleError('SpectralAttention computation failed', error, { fftSize: fftAnalysis.fftSize });
-                return new Float32Array(fftAnalysis.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		// Harmonic boost adjustment
+		let harmonicBoost = spectralProfile.harmonicRatio > 0.6 && (profile === 'warm' || profile === 'jazz') ? 1.7 : 1.0; // Tăng từ 1.5, giảm ngưỡng từ 0.65
+		if (isVocalFeedback) {
+			harmonicBoost *= 1.15; // Tăng cho vocal feedback
+		}
 
-        // Thêm hàm tính PsychoacousticWeight
-        const computePsychoacousticWeight = () => {
-            try {
-                const fftSize = fftAnalysis.fftSize || 2048;
-                const psychoacousticWeight = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    const maskingThreshold = Math.pow(10, -60 / 20) * fletcherMunson(freq);
-                    const perceptualSensitivity = at2030Config.listenerProfile === 'audiophile' ? 1.1 : at2030Config.listenerProfile === 'casual' ? 0.9 : 1.0;
-                    psychoacousticWeight[i] = ensureFinite(maskingThreshold * perceptualSensitivity, 1.0);
-                }
-                return psychoacousticWeight;
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { fftSize: fftAnalysis.fftSize });
-                return new Float32Array(fftAnalysis.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		// EQ filter settings
+		this.subBassFilter.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.subBassGain, 3) + (profile === 'bassHeavy' ? 2.5 : 0) + (spectralProfile.subBassEnergy > 0.7 ? 1 : 0), // Tăng từ 2
+			currentTime + rampTime
+		);
+		this.lowShelfGain.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.bassGain, 4.5) + 9, // Tăng từ 8
+			currentTime + rampTime
+		);
+		this.subMidFilter.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.subMidGain, 0) + 5 + harmonicBoost + (spectralProfile.spectralComplexity > 0.7 ? 1 : 0), // Tăng từ 4
+			currentTime + rampTime
+		);
+		this.midBassFilter.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.midLowGain, 0) + 6 + (profile === 'bassHeavy' ? 1.5 : 0), // Tăng từ 5/1
+			currentTime + rampTime
+		);
+		this.midShelfGain.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.midHighGain, 4) + 9 + transientBoostAdjust, // Tăng từ 8
+			currentTime + rampTime
+		);
+		this.highShelfGain.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.highGain, 4.5) + 8 + transientBoostAdjust + (profile === 'bright' ? 1 : 0), // Tăng từ 7
+			currentTime + rampTime
+		);
+		this.subTrebleFilter.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.subTrebleGain, 0) + 5 + transientBoostAdjust + (profile === 'smartStudio' ? 1 : 0), // Tăng từ 4
+			currentTime + rampTime
+		);
 
-        // Thêm hàm tính EmotionTimbreMap
-        const computeEmotionTimbreMap = () => {
-            try {
-                const fftSize = fftAnalysis.fftSize || 2048;
-                const timbreCurve = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const splinePoints = {
-                    warm: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 0.9] },
-                    bright: { freq: [1000, 4000, 8000], gain: [0.9, 1.0, 1.2] },
-                    bassHeavy: { freq: [50, 100, 200], gain: [1.3, 1.2, 1.0] },
-                    vocal: { freq: [200, 1000, 2000], gain: [1.0, 1.2, 1.1] },
-                    proNatural: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] },
-                    karaokeDynamic: { freq: [200, 1000, 2000], gain: [1.1, 1.3, 1.1] },
-                    rockMetal: { freq: [100, 4000, 8000], gain: [1.2, 1.0, 1.15] },
-                    smartStudio: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.05] },
-                    neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    let gain = 1.0;
-                    for (let j = 1; j < profilePoints.freq.length; j++) {
-                        if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                            const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                            gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                        }
-                    }
-                    timbreCurve[i] = ensureFinite(gain * at2030Config.emotionalVector, 1.0);
-                }
-                return timbreCurve;
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { fftSize: fftAnalysis.fftSize });
-                return new Float32Array(fftAnalysis.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		// Noise reduction adjustment
+		const noiseReduction = (this.noiseLevel?.white > 0.5 || this.noiseLevel?.midFreq > 0.5 || this.wienerGain < 0.8) ? -2 : 0; // Tăng từ -2.5
+		this.airFilter.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.airGain, 0) + 5 + noiseReduction + (profile === 'smartStudio' ? 1.5 : 0), // Tăng từ 4/1
+			currentTime + rampTime
+		);
 
-        if (isDebug) {
-            console.debug('AT2030 Config initialized for AutoEQ', {
-                enabled: at2030Config.enabled,
-                formantScale: at2030Config.formantScale,
-                harmonicBoost: at2030Config.harmonicBoost,
-                transientSculpt: at2030Config.transientSculpt,
-                phaseLockFactor: at2030Config.phaseLockFactor,
-                emotionalVector: at2030Config.emotionalVector,
-                deviceAdaptFactor: at2030Config.deviceAdaptFactor,
-                listenerProfile: at2030Config.listenerProfile,
-                timbreProfile: at2030Config.timbreProfile
-            });
-        }
+		// Formant filter settings
+		const formantFreqAdjust = songStructure.section === 'chorus' ? 1.2 : songStructure.section === 'bridge' ? 1.15 : songStructure.section === 'verse' ? 1.05 : 1.0; // Tăng từ 1.15/1.1
+		this.formantFilter1.frequency.linearRampToValueAtTime(
+			ensureFinite(eqSettings.formantF1Freq, DEFAULT_FORMANT_F1_FREQ) * formantFreqAdjust,
+			currentTime + rampTime
+		);
+		this.formantFilter2.frequency.linearRampToValueAtTime(
+			ensureFinite(eqSettings.formantF2Freq, DEFAULT_FORMANT_F2_FREQ) * formantFreqAdjust,
+			currentTime + rampTime
+		);
+		if (this.formantFilter3) {
+			this.formantFilter3.frequency.linearRampToValueAtTime(
+				ensureFinite(eqSettings.formantF3Freq, DEFAULT_FORMANT_F3_FREQ) * formantFreqAdjust,
+				currentTime + rampTime
+			);
+			this.formantFilter3.gain.linearRampToValueAtTime(
+				ensureFinite(eqSettings.formantGain, DEFAULT_FORMANT_GAIN) + (profile === 'vocal' || isVocalFeedback ? 2.5 : 0), // Tăng từ 2
+				currentTime + rampTime
+			);
+		}
+		this.formantFilter1.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.formantGain, DEFAULT_FORMANT_GAIN) + (profile === 'vocal' || isVocalFeedback ? 2.5 : 0), // Tăng từ 2
+			currentTime + rampTime
+		);
+		this.formantFilter2.gain.linearRampToValueAtTime(
+			ensureFinite(eqSettings.formantGain, DEFAULT_FORMANT_GAIN) + (profile === 'vocal' || isVocalFeedback ? 2.5 : 0), // Tăng từ 2
+			currentTime + rampTime
+		);
 
-        // Lấy userFeedback từ memoryManager
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory);
-        const isVocalFeedback = recentFeedback?.semanticCategory === 'vocal';
+		// Lưu EQ settings vào memoryManager
+		if (this.memoryManager && spectralProfile.spectralFlux > 0.035) { // Giảm ngưỡng từ 0.04
+			const cacheKey = `eqSettings_${this.contextId}_${profile}_${songStructure.section}`;
+			const cacheData = {
+				data: {
+					...eqSettings,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					spectralProfile
+				},
+				expiry: Date.now() + (isLowPowerDevice && cpuLoad > 0.9 ? 15000 : 25000), // Tùy chỉnh expiry
+				priority: 'high'
+			};
+			this.memoryManager.set(cacheKey, cacheData, 'high');
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+		}
 
-        // Wiener và pitch adjustment
-        const wienerThresholdAdjust = this.wienerGain < 0.7 ? -15 * (1 - this.wienerGain) : 0;
-        const pitchAdjust = Math.min(7.5, absMult * 15);
-
-        // Tính các thành phần HiFi AT2030
-        const spectralAttention = computeSpectralAttention();
-        const psychoacousticWeight = computePsychoacousticWeight();
-        const timbreCurve = computeEmotionTimbreMap();
-
-        // Compressor settings
-        this.compressor.threshold.linearRampToValueAtTime(
-            ensureFinite(eqSettings.clarityGain, 0) < 2 ? -25 + wienerThresholdAdjust - pitchAdjust : -21 + wienerThresholdAdjust - pitchAdjust,
-            currentTime + rampTime
-        );
-        this.compressor.ratio.linearRampToValueAtTime(
-            11 + absMult * 3.2,
-            currentTime + rampTime
-        );
-        this.compressor.attack.linearRampToValueAtTime(
-            0.0035,
-            currentTime + rampTime
-        );
-        this.compressor.release.linearRampToValueAtTime(
-            0.012, // Tinh chỉnh nhẹ để vocal mượt hơn
-            currentTime + rampTime
-        );
-
-        // Transient boost adjustment
-        let transientBoostAdjust = Math.min(ensureFinite(eqSettings.transientBoost, DEFAULT_TRANSIENT_BOOST) * 2.1, 5.5);
-        if (spectralProfile.transientDensity > 0.5 || spectralProfile.spectralFlux > 0.55 || profile === 'rockMetal' || profile === 'vocal') {
-            transientBoostAdjust *= 1.25;
-        }
-        if (profile === 'bright' || profile === 'smartStudio') {
-            transientBoostAdjust *= 1.1;
-        }
-        transientBoostAdjust *= at2030Config.transientSculpt * midBalance;
-
-        // Harmonic boost adjustment
-        let harmonicBoost = spectralProfile.harmonicRatio > 0.5 && (profile === 'warm' || profile === 'jazz') ? 1.8 : 1.0;
-        if (isVocalFeedback) {
-            harmonicBoost *= 1.15;
-        }
-        harmonicBoost *= at2030Config.harmonicBoost;
-
-        // Áp dụng HiFi AT2030 gain vào EQ filters
-        const applyAT2030Gain = (baseGain, freqIdx) => {
-            const idx = Math.min(freqIdx, spectralAttention.length - 1);
-            return ensureFinite(
-                baseGain * at2030Config.deviceAdaptFactor * at2030Config.emotionalVector * spectralAttention[idx] * psychoacousticWeight[idx] * timbreCurve[idx],
-                baseGain
-            );
-        };
-
-        // EQ filter settings
-        this.subBassFilter.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.subBassGain, 3) + (profile === 'bassHeavy' ? 2.8 : 0) + (spectralProfile.subBassEnergy > 0.6 ? 1.1 : 0),
-                Math.floor(50 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.lowShelfGain.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.bassGain, 4.5) + 8.5,
-                Math.floor(100 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.subMidFilter.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.subMidGain, 0) + 5.5 + harmonicBoost + (spectralProfile.spectralComplexity > 0.6 ? 1.1 : 0),
-                Math.floor(500 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.midBassFilter.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.midLowGain, 0) + 6.5 + (profile === 'bassHeavy' ? 1.8 : 0),
-                Math.floor(200 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.midShelfGain.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.midHighGain, 4) + 8.5 + transientBoostAdjust * midBalance,
-                Math.floor(1000 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.highShelfGain.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.highGain, 4.5) + 7.5 + transientBoostAdjust * at2030Config.phaseLockFactor + (profile === 'bright' ? 0.8 : 0),
-                Math.floor(4000 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-        this.subTrebleFilter.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.subTrebleGain, 0) + 5.5 + transientBoostAdjust * at2030Config.phaseLockFactor + (profile === 'smartStudio' ? 0.8 : 0),
-                Math.floor(8000 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-
-        // Noise reduction adjustment
-        const noiseReduction = (this.noiseLevel?.white > 0.4 || this.noiseLevel?.midFreq > 0.4 || this.wienerGain < 0.7) ? -1.5 : 0;
-        this.airFilter.gain.linearRampToValueAtTime(
-            applyAT2030Gain(
-                ensureFinite(eqSettings.airGain, 0) + 5.5 + noiseReduction + (profile === 'smartStudio' ? 1.2 : 0),
-                Math.floor(12000 * fftAnalysis.fftSize / this.context.sampleRate)
-            ),
-            currentTime + rampTime
-        );
-
-        // Formant filter settings
-        const formantFreqAdjust = songStructure.section === 'chorus' ? 1.3 : songStructure.section === 'bridge' ? 1.25 : songStructure.section === 'verse' ? 1.15 : 1.0;
-        const formantIdx = Math.floor(1000 * fftAnalysis.fftSize / this.context.sampleRate);
-        const formantGain = applyAT2030Gain(
-            ensureFinite(eqSettings.formantGain, DEFAULT_FORMANT_GAIN) + (profile === 'vocal' || isVocalFeedback ? 3.5 : 0),
-            formantIdx
-        );
-        this.formantFilter1.frequency.linearRampToValueAtTime(
-            ensureFinite(eqSettings.formantF1Freq, DEFAULT_FORMANT_F1_FREQ) * formantFreqAdjust * at2030Config.formantScale,
-            currentTime + rampTime
-        );
-        this.formantFilter1.gain.linearRampToValueAtTime(
-            formantGain * at2030Config.emotionalVector,
-            currentTime + rampTime
-        );
-        this.formantFilter2.frequency.linearRampToValueAtTime(
-            ensureFinite(eqSettings.formantF2Freq, DEFAULT_FORMANT_F2_FREQ) * formantFreqAdjust * at2030Config.formantScale,
-            currentTime + rampTime
-        );
-        this.formantFilter2.gain.linearRampToValueAtTime(
-            formantGain * at2030Config.emotionalVector,
-            currentTime + rampTime
-        );
-        if (this.formantFilter3) {
-            this.formantFilter3.frequency.linearRampToValueAtTime(
-                ensureFinite(eqSettings.formantF3Freq, DEFAULT_FORMANT_F3_FREQ) * formantFreqAdjust * at2030Config.formantScale,
-                currentTime + rampTime
-            );
-            this.formantFilter3.gain.linearRampToValueAtTime(
-                formantGain * at2030Config.emotionalVector,
-                currentTime + rampTime
-            );
-        }
-
-        // Lưu EQ settings vào memoryManager
-        if (this.memoryManager && spectralProfile.spectralFlux > 0.025) {
-            const cacheKey = `eqSettings_${this.contextId}_${profile}_${songStructure.section}`;
-            const cacheData = {
-                data: {
-                    ...eqSettings,
-                    timestamp: Date.now(),
-                    profile,
-                    songStructure,
-                    spectralProfile,
-                    at2030Config
-                },
-                expiry: Date.now() + (isLowPowerDevice && cpuLoad > 0.8 ? 10000 : 18000),
-                priority: 'high'
-            };
-            this.memoryManager.set(cacheKey, cacheData, 'high');
-            this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
-        }
-
-        // Debug logging
-        if (isDebug) {
-            console.debug('Applied Auto-EQ with HiFi AT2030:', {
-                eqSettings,
-                transientBoostAdjust,
-                harmonicBoost,
-                noiseReduction,
-                wienerThresholdAdjust,
-                pitchAdjust,
-                spectralProfile,
-                songStructure,
-                profile,
-                cpuLoad,
-                isLowPowerDevice,
-                isVocalFeedback,
-                at2030Config,
-                cacheKey: `eqSettings_${this.contextId}_${profile}_${songStructure.section}`,
-                spectralAttention: spectralAttention.slice(0, 10), // Log mẫu
-                psychoacousticWeight: psychoacousticWeight.slice(0, 10), // Log mẫu
-                timbreCurve: timbreCurve.slice(0, 10) // Log mẫu
-            });
-        }
-    } catch (error) {
-        handleError('Error applying auto-EQ:', error, {
-            eqSettings,
-            wienerGain: this.wienerGain,
-            transientBoost: this.transientBoost,
-            profile: this.profile,
-            songStructure,
-            spectralProfile,
-            at2030Config
-        }, 'high', {
-            memoryManager: this.memoryManager
-        });
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug('Applied Auto-EQ:', {
+				eqSettings,
+				transientBoostAdjust,
+				harmonicBoost,
+				noiseReduction,
+				wienerThresholdAdjust,
+				pitchAdjust,
+				spectralProfile,
+				songStructure,
+				profile,
+				cpuLoad,
+				isLowPowerDevice,
+				isVocalFeedback,
+				cacheKey: `eqSettings_${this.contextId}_${profile}_${songStructure.section}`
+			});
+		}
+	} catch (error) {
+		handleError('Error applying auto-EQ:', error, {
+			eqSettings,
+			wienerGain: this.wienerGain,
+			transientBoost: this.transientBoost,
+			profile: this.profile,
+			songStructure,
+			spectralProfile
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+	}
 };
 
 Jungle.prototype.start = function() {
-    if (this.isStarted) return Promise.resolve();
+	if (this.isStarted) return Promise.resolve();
 
-    return this.ensureAudioContext().then(() => {
-        try {
-            const currentTime = this.context.currentTime;
-            const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-            const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-            const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-            const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-            const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-            const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-            const spectralProfile = this.spectralProfile || {
-                subBass: 0.5,
-                bass: 0.5,
-                subMid: 0.5,
-                midLow: 0.5,
-                midHigh: 0.5,
-                high: 0.5,
-                subTreble: 0.5,
-                air: 0.5,
-                vocalPresence: 0.5,
-                transientEnergy: 0.5,
-                instruments: {},
-                chroma: null,
-                spectralComplexity: 0.5,
-                harmonicRatio: 0.5,
-                spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-            };
+	return this.ensureAudioContext().then(() => {
+		try {
+			const currentTime = this.context.currentTime;
+			const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+			const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+			const profile = this.profile || 'smartStudio';
+			const songStructure = this.memoryManager?.get('lastStructure') || {
+				section: 'unknown'
+			};
 
-            // Kiểm tra các node
-            const nodes = [this.mod1, this.mod2, this.mod3, this.mod4, this.fade1, this.fade2];
-            if (nodes.some(node => !node || typeof node.start !== 'function')) {
-                throw new Error('One or more audio nodes are not initialized');
-            }
+			// Kiểm tra các node
+			const nodes = [this.mod1, this.mod2, this.mod3, this.mod4, this.fade1, this.fade2];
+			if (nodes.some(node => !node || typeof node.start !== 'function')) {
+				throw new Error('One or more audio nodes are not initialized');
+			}
 
-            // Dynamic Start Timing
-            const baseStartDelay = isLowPowerDevice && cpuLoad > 0.9 ? 0.030 : 0.050;
-            const startDelay = baseStartDelay * deviceAdaptFactor * (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7 ? 1.1 : 1.0); // Tối ưu cho âm thanh phức tạp
-            const bufferTime = ensureFinite(this.bufferTime, DEFAULT_BUFFER_TIME);
-            const fadeTime = ensureFinite(this.fadeTime, DEFAULT_FADE_TIME);
-            const structureAdjust = songStructure.section === 'chorus' ? 1.1 : songStructure.section === 'bridge' ? 1.05 : 1.0;
-            const listenerAdjust = listenerProfile === 'audiophile' ? 1.05 : listenerProfile === 'casual' ? 0.95 : 1.0; // Tối ưu cho listenerProfile
+			// Dynamic Start Timing
+			const startDelay = isLowPowerDevice && cpuLoad > 0.9 ? 0.030 : 0.050; // Giảm từ 0.050 cho thiết bị yếu
+			const bufferTime = ensureFinite(this.bufferTime, DEFAULT_BUFFER_TIME);
+			const fadeTime = ensureFinite(this.fadeTime, DEFAULT_FADE_TIME);
+			const structureAdjust = songStructure.section === 'chorus' ? 1.1 : songStructure.section === 'bridge' ? 1.05 : 1.0;
 
-            const t = currentTime + startDelay * structureAdjust * listenerAdjust;
-            const t2 = t + bufferTime - fadeTime;
+			const t = currentTime + startDelay * structureAdjust;
+			const t2 = t + bufferTime - fadeTime;
 
-            // Khởi động các node
-            this.mod1.start(t);
-            this.mod2.start(t2);
-            this.mod3.start(t);
-            this.mod4.start(t2);
-            this.fade1.start(t);
-            this.fade2.start(t2);
+			// Khởi động các node
+			this.mod1.start(t);
+			this.mod2.start(t2);
+			this.mod3.start(t);
+			this.mod4.start(t2);
+			this.fade1.start(t);
+			this.fade2.start(t2);
 
-            // Đặt trạng thái khởi động
-            this.isStarted = true;
+			// Đặt trạng thái khởi động
+			this.isStarted = true;
 
-            // Khởi tạo worker và phân tích âm thanh
-            this.initializeWorker();
-            // Gọi setFFTSize thông minh thay vì DEFAULT_FFT_SIZE
-            const targetFFTSize = (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal' || spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7) ? 4096 : 2048;
-            this.setFFTSize(targetFFTSize); // Tận dụng logic của setFFTSize
-            this.startAudioAnalysis();
+			// Khởi tạo worker và phân tích âm thanh
+			this.initializeWorker();
+			if (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal') {
+				this.setFFTSize(DEFAULT_FFT_SIZE); // 4096 từ hằng số
+			}
+			this.startAudioAnalysis();
 
-            // Bảo toàn userFeedback trước khi lưu trạng thái
-            let preservedFeedback = [];
-            if (this.memoryManager && this.memoryManager.buffers.get('userFeedback')) {
-                preservedFeedback = this.memoryManager.buffers.get('userFeedback').slice();
-            }
+			// Lưu trạng thái khởi động vào memoryManager
+			if (this.memoryManager) {
+				const cacheKey = `startState_${this.contextId}_${profile}`;
+				const cacheData = {
+					data: {
+						isStarted: true,
+						timestamp: Date.now(),
+						profile,
+						songStructure
+					},
+					expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000), // Tùy chỉnh expiry
+					priority: 'high'
+				};
+				this.memoryManager.set(cacheKey, cacheData, 'high');
+				this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+			}
 
-            // Lưu trạng thái khởi động vào memoryManager
-            if (this.memoryManager) {
-                const cacheKey = this.generateCacheSignature?.(`startState_${this.contextId}`, {
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    cpuLoad,
-                    deviceAdaptFactor
-                }) || `startState_${this.contextId}_${profile}`;
-                const cacheData = {
-                    data: {
-                        isStarted: true,
-                        timestamp: Date.now(),
-                        profile,
-                        listenerProfile,
-                        songStructure,
-                        startDelay,
-                        bufferTime,
-                        fadeTime,
-                        fftSize: this._analyser?.fftSize || targetFFTSize,
-                        deviceAdaptFactor
-                    },
-                    expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                    priority: 'high'
-                };
-                this.memoryManager.set(cacheKey, cacheData, 'high');
-                // Khôi phục userFeedback
-                if (preservedFeedback.length > 0) {
-                    this.memoryManager.buffers.set('userFeedback', preservedFeedback, { priority: 'high' });
-                }
-                this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-            }
-
-            // Debug logging
-            const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-            if (isDebug) {
-                console.debug('Jungle started:', {
-                    startTime: t,
-                    fadeTime: t2,
-                    bufferTime,
-                    startDelay,
-                    cpuLoad,
-                    isLowPowerDevice,
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    spectralEntropy: spectralProfile.spectralEntropy,
-                    harmonicRatio: spectralProfile.harmonicRatio,
-                    deviceAdaptFactor,
-                    fftSize: this._analyser?.fftSize || targetFFTSize,
-                    cacheStats: this.memoryManager?.getCacheStats?.()
-                });
-            }
-        } catch (error) {
-            handleError('Error starting Jungle nodes:', error, {
-                profile,
-                listenerProfile,
-                songStructure,
-                cpuLoad,
-                isLowPowerDevice,
-                deviceAdaptFactor
-            }, 'high', {
-                memoryManager: this.memoryManager
-            });
-            this.isStarted = false;
-            throw error;
-        }
-    });
+			// Debug logging
+			const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+			if (isDebug) {
+				console.debug('Jungle started:', {
+					startTime: t,
+					fadeTime: t2,
+					bufferTime,
+					cpuLoad,
+					isLowPowerDevice,
+					profile,
+					songStructure,
+					fftSize: this._analyser?.fftSize || DEFAULT_FFT_SIZE
+				});
+			}
+		} catch (error) {
+			handleError('Error starting Jungle nodes:', error, {
+				profile: this.profile,
+				songStructure,
+				cpuLoad,
+				isLowPowerDevice
+			}, 'high', {
+				memoryManager: this.memoryManager
+			});
+			this.isStarted = false;
+			throw error;
+		}
+	});
 };
 
 Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, cosmicEnhance, options = {
-    reverb: 0,
-    userFeedback: {}
+	reverb: 0,
+	userFeedback: {}
 }) {
     try {
         const currentTime = this.context.currentTime;
         const rampTime = this.rampTime || 0.1;
+        // Tích hợp minFadeLength = 512 cho cross-fading mượt hơn
         const minFadeLength = 512;
-        const crossFadeTime = Math.max(minFadeLength / this.context.sampleRate, this.getCPULoad?.() > 0.9 ? 0.06 : 0.08);
+        const crossFadeTime = Math.max(minFadeLength / this.context.sampleRate, this.getCPULoad?.() > 0.9 ? 0.06 : 0.08); // Kết hợp CPU load
 
         // Lưu trạng thái hiện tại để cross-fading
         const previousState = {
@@ -4008,7 +3318,7 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
         const validatedPitchMult = Number.isFinite(pitchMult) ? pitchMult : 0;
         const validatedAbsPitchMult = Number.isFinite(absPitchMult) ? Math.max(0, absPitchMult) : Math.abs(validatedPitchMult);
         const validatedCosmicEnhance = Number.isFinite(cosmicEnhance) ? Math.max(0, Math.min(0.5, cosmicEnhance)) : 0;
-        const validatedReverb = Number.isFinite(options.reverb) ? Math.max(0, Math.min(0.5, options.reverb)) : 0;
+        const validatedReverb = Number.isFinite(options.reverb) ? Math.max(0, Math.min(0.5, options.reverb)) : 0; // Giữ placeholder, không dùng
         const userFeedback = options.userFeedback || {};
 
         // Kiểm tra CPU load để tối ưu hiệu suất
@@ -4016,7 +3326,7 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
         const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
         const cpuLoadAdjust = cpuLoad > 0.9 || isLowPowerDevice ? 0.85 : 1.0;
 
-        // Tính ramp time động
+        // Tính ramp time động dựa trên profile và pitch
         const profileChangeMagnitude = this.lastProfileName !== profileName ? 1.0 : Math.min(validatedAbsPitchMult * 0.5, 0.5);
         const adjustedRampTime = rampTime * (1 + profileChangeMagnitude * 0.3);
 
@@ -4030,7 +3340,7 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
 
         // Phát hiện tai nghe
         const isHeadphone = this.isHeadphoneModeEnabled || (navigator.mediaDevices?.enumerateDevices ? this.checkOutputDevice() : false);
-        const headphoneTrebleReduction = isHeadphone ? 0.82 : 1.0;
+        const headphoneTrebleReduction = isHeadphone ? 0.82 : 1.0; // Giảm nhẹ treble cho tai nghe
 
         // Boost theo thể loại âm nhạc
         const genreBoostMap = {
@@ -4046,94 +3356,56 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
 
         // Cấu hình profile với tham số tối ưu
         const profileSettings = {
-            'warm': { bassReduction: 0.65, clarityBoost: 0.85, instrumentFocus: 1.1, transientSculpt: 1.0 },
-            'bright': { bassReduction: 0.5, clarityBoost: 1.15, instrumentFocus: 1.2, transientSculpt: 1.1 },
-            'bassHeavy': { bassReduction: 0.6, clarityBoost: 0.8, instrumentFocus: 1.0, transientSculpt: 1.2 },
-            'vocal': { bassReduction: 0.4, clarityBoost: 1.05, instrumentFocus: 1.3, transientSculpt: 1.0 },
-            'proNatural': { bassReduction: 0.5, clarityBoost: 0.95, instrumentFocus: 1.1, transientSculpt: 1.0 },
-            'karaokeDynamic': { bassReduction: 0.4, clarityBoost: 1.1, instrumentFocus: 1.4, transientSculpt: 1.2 },
-            'rockMetal': { bassReduction: 0.5, clarityBoost: 1.0, instrumentFocus: 1.25, transientSculpt: 1.5 },
-            'smartStudio': { bassReduction: 0.45, clarityBoost: 1.0, instrumentFocus: 1.2, transientSculpt: 1.1 }
-        };
-        const profile = profileSettings[profileName] || profileSettings['smartStudio'];
-
-        // Áp dụng HiFi AT2030
-        const quantumSuperposition = (f, sigma) => {
-            const order = isLowPowerDevice ? 3 : 5;
-            let result = 0;
-            for (let i = 1; i <= order; i++) {
-                const wavelet_coeff = Math.exp(-f * f / (2 * sigma * sigma)) * Math.cos(2 * Math.PI * f * currentTime);
-                const harmonic_series = Math.sin(2 * Math.PI * f * i * currentTime) / i;
-                result += wavelet_coeff * harmonic_series;
+            'warm': {
+                bassReduction: 0.65,
+                clarityBoost: 0.85,
+                instrumentFocus: 1.1
+            },
+            'bright': {
+                bassReduction: 0.5,
+                clarityBoost: 1.15,
+                instrumentFocus: 1.2
+            },
+            'bassHeavy': {
+                bassReduction: 0.6,
+                clarityBoost: 0.8,
+                instrumentFocus: 1.0
+            },
+            'vocal': {
+                bassReduction: 0.4,
+                clarityBoost: 1.05,
+                instrumentFocus: 1.3
+            },
+            'proNatural': {
+                bassReduction: 0.5,
+                clarityBoost: 0.95,
+                instrumentFocus: 1.1
+            },
+            'karaokeDynamic': {
+                bassReduction: 0.4,
+                clarityBoost: 1.1,
+                instrumentFocus: 1.4
+            },
+            'rockMetal': {
+                bassReduction: 0.5,
+                clarityBoost: 1.0,
+                instrumentFocus: 1.25
+            },
+            'smartStudio': {
+                bassReduction: 0.45,
+                clarityBoost: 1.0,
+                instrumentFocus: 1.2
+            },
+            'popStudio': {
+                bassReduction: 0.5,
+                clarityBoost: 1.3,
+                instrumentFocus: 1.3
             }
-            return result;
         };
+        const profile = profileSettings[profileName] || profileSettings['popStudio'];
 
-        const entanglement = (vocalPresence, midGain, trebleQ) => {
-            const vocal_formant = validatedSpectral.vocalPresence * (profileName === 'vocal' ? 1.0 : profileName === 'warm' ? 0.9 : 0.8);
-            const mid_gain = profileName === 'bright' ? 0.75 : 0.65;
-            const treble_q = profileName === 'bright' ? 0.7 : 0.6;
-            if (validatedSpectral.subBass > 0.7) {
-                return Math.sqrt(vocal_formant * mid_gain * treble_q) * 0.95;
-            }
-            return Math.sqrt(vocal_formant * mid_gain * treble_q);
-        };
-
-        const phaseCoherence = () => {
-            const phase_diff = fftAnalysis ? Math.atan2(fftAnalysis.imag, fftAnalysis.real) : 0;
-            const phase_lock_factor = profileName === 'proNatural' ? 1.0 : 0.8;
-            return Math.cos(phase_diff) * phase_lock_factor;
-        };
-
-        const transientSculpt = () => {
-            const transientEnergy = validatedSpectral.transientEnergy;
-            const sculpt_factor = profile.transientSculpt * (cpuLoad > 0.8 ? 0.8 : 1.0);
-            return transientEnergy * sculpt_factor;
-        };
-
-        const aiEmotionalAdjust = (emotional) => {
-            const emotional_vector = {
-                'calm': 0.9,
-                'neutral': 1.0,
-                'aggressive': 1.1
-            }[emotional || 'neutral'];
-            const masterGain = Math.max(0.5, Math.min(1.5, validatedSpectral.energy * validatedSpectral.spectralFlux));
-            return emotional_vector * masterGain;
-        };
-
-        const masterFormantScale = (pitchShift) => {
-            let formantScale = profileName === 'vocal' ? 1.0 : profileName === 'bassHeavy' ? 1.1 : 0.95;
-            if (validatedSpectral.subBass > 0.7) formantScale *= 0.95;
-            return Math.max(0.8, Math.min(1.2, formantScale * (1 + pitchShift * 0.03)));
-        };
-
-        const spectralAttention = () => {
-            const energy = fftAnalysis ? Math.pow(fftAnalysis.magnitude, 2) : validatedSpectral.energy;
-            const spectralFlux = fftAnalysis ? Math.abs(energy - (this.previousEnergy || energy)) / energy : validatedSpectral.spectralFlux;
-            return Math.exp(energy * spectralFlux) / (1 + Math.exp(energy * spectralFlux));
-        };
-
-        const psychoacousticWeight = () => {
-            const fletcherMunson = (f) => {
-                const spl = -20 * Math.log10(f);
-                return Math.pow(10, spl / 20) * (f < 1000 ? 0.8 : f > 4000 ? 1.2 : 1.0);
-            };
-            const perceptualSensitivity = userFeedback.listenerProfile === 'audiophile' ? 1.1 : userFeedback.listenerProfile === 'casual' ? 0.9 : 1.0;
-            return fletcherMunson(1000) * perceptualSensitivity;
-        };
-
-        const emotionTimbreMap = (emotional) => {
-            const emotional_vector = {
-                'calm': 0.9,
-                'neutral': 1.0,
-                'aggressive': 1.1
-            }[emotional || 'neutral'];
-            const timbre_curve = profileName === 'warm' ? 1.1 : profileName === 'bright' ? 1.3 : profileName === 'vocal' ? 1.2 : 1.0;
-            return emotional_vector * timbre_curve;
-        };
-
-        // Chuẩn hóa gain với HiFi AT2030
-        const normalizationFactor = 0.7 / Math.max(1, profile.clarityBoost * profile.instrumentFocus * genreBoost * cpuLoadAdjust * psychoacousticWeight());
+        // Chuẩn hóa gain để tránh méo tiếng
+        const normalizationFactor = 0.8 / Math.max(1, profile.clarityBoost * profile.instrumentFocus * genreBoost * cpuLoadAdjust);
 
         // Cross-fading khi đổi profile
         if (this.lastProfileName !== profileName && this.inputNode && this.outputNode) {
@@ -4162,16 +3434,16 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
         }
         this.lastProfileName = profileName;
 
-        // Logic boost tối ưu với HiFi AT2030
-        const subBassBoost = (subBassEnergy < 0.4 ? 1.5 : validatedSpectral.subBass > 0.7 ? 0.95 : 1.2) * profile.bassReduction * cpuLoadAdjust * quantumSuperposition(50, profileName === 'bassHeavy' ? 0.5 : 0.4);
-        const subMidBoost = (validatedSpectral.subMid < 0.4 ? 1.1 : validatedSpectral.subMid > 0.7 ? 0.95 : 1.0) * profile.bassReduction * cpuLoadAdjust * entanglement(validatedSpectral.vocalPresence, 0.65, 0.6);
-        const midBoost = (validatedSpectral.midLow < 0.5 || validatedSpectral.midHigh < 0.5 ? 1.2 : validatedSpectral.midLow > 0.7 ? 0.95 : 1.1) * cpuLoadAdjust * entanglement(validatedSpectral.vocalPresence, 0.75, 0.7);
-        const instrumentBoost = (isInstrumentHeavy ? 1.2 : isVocalHeavy ? 0.95 : 1.1) * profile.instrumentFocus * cpuLoadAdjust;
-        const trebleBoostBase = validatedSpectral.subTreble < 0.4 ? 1.1 : validatedSpectral.subTreble > 0.7 ? 0.95 : 1.0;
+        // Logic boost tối ưu
+        const subBassBoost = subBassEnergy < 0.4 ? 1.5 : (validatedSpectral.subBass > 0.7 ? 0.95 : 1.2) * profile.bassReduction * cpuLoadAdjust;
+        const subMidBoost = validatedSpectral.subMid < 0.4 ? 1.1 : (validatedSpectral.subMid > 0.7 ? 0.95 : 1.0) * profile.bassReduction * cpuLoadAdjust;
+        const midBoost = validatedSpectral.midLow < 0.5 || validatedSpectral.midHigh < 0.5 ? 1.2 : (validatedSpectral.midLow > 0.7 ? 0.95 : 1.1) * cpuLoadAdjust;
+        const instrumentBoost = isInstrumentHeavy ? 1.2 : (isVocalHeavy ? 0.95 : 1.1) * profile.instrumentFocus * cpuLoadAdjust;
+        const trebleBoostBase = validatedSpectral.subTreble < 0.4 ? 1.1 : (validatedSpectral.subTreble > 0.7 ? 0.95 : 1.0);
         const transientBoost = Math.min(
             validatedSpectral.transientEnergy > 0.65 ? 1.4 : 1.0 + (this.transientBoost || 0) * 1.0,
             1.4
-        ) * (1.0 + harmonicRichness * 0.15) * profile.clarityBoost * cpuLoadAdjust * transientSculpt();
+        ) * (1.0 + harmonicRichness * 0.15) * profile.clarityBoost * cpuLoadAdjust;
 
         // Tinh chỉnh treble và de-esser
         let dynamicTrebleReduction = 1.0;
@@ -4183,33 +3455,32 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
             dynamicTrebleReduction = 1.0 - (highFreqEnergy - 0.5) * 0.25;
             deEsserGain = -12 - (highFreqEnergy - 0.5) * 8;
         }
-        dynamicTrebleReduction = Math.max(0.8, dynamicTrebleReduction * headphoneTrebleReduction * psychoacousticWeight());
+        dynamicTrebleReduction = Math.max(0.8, dynamicTrebleReduction * headphoneTrebleReduction);
         deEsserGain = Math.max(-20, Math.min(-10, deEsserGain));
         const trebleBoost = trebleBoostBase * dynamicTrebleReduction * (1.0 + validatedCosmicEnhance * 0.3) * cpuLoadAdjust;
 
-        // Formant thông minh với phase coherence
+        // Formant thông minh
         let f1FreqBase = isVocalHeavy ? 560 : 510;
         let f2FreqBase = isVocalHeavy ? 2300 : 2020;
         let formantGain = isVocalHeavy ? 3.2 : 2.7;
-        const formantScale = masterFormantScale(validatedPitchMult);
         if (validatedPitchMult > 0) {
-            f1FreqBase += validatedAbsPitchMult * 50 * formantScale;
-            f2FreqBase += validatedAbsPitchMult * 200 * formantScale;
+            f1FreqBase += validatedAbsPitchMult * 50;
+            f2FreqBase += validatedAbsPitchMult * 200;
             formantGain = Math.max(2.0, formantGain - validatedAbsPitchMult * 0.7);
         } else if (validatedPitchMult < 0) {
-            f1FreqBase = Math.max(300, f1FreqBase - validatedAbsPitchMult * 30 * formantScale);
-            f2FreqBase = Math.max(1500, f2FreqBase - validatedAbsPitchMult * 150 * formantScale);
+            f1FreqBase = Math.max(300, f1FreqBase - validatedAbsPitchMult * 30);
+            f2FreqBase = Math.max(1500, f2FreqBase - validatedAbsPitchMult * 150);
             formantGain = Math.min(3.8, formantGain + validatedAbsPitchMult * 0.4);
         }
-        formantGain *= (1.0 + validatedSpectral.vocalPresence * 0.25) * profile.clarityBoost * cpuLoadAdjust * phaseCoherence();
-        formantGain = Math.min(3.8, formantGain + (userFeedback.vocalClarity || 0) * 0.2 * aiEmotionalAdjust('neutral'));
+        formantGain *= (1.0 + validatedSpectral.vocalPresence * 0.25) * profile.clarityBoost * cpuLoadAdjust;
+        formantGain = Math.min(3.8, formantGain + (userFeedback.vocalClarity || 0) * 0.2);
 
         // Compressor tối ưu
         const dynamicFactor = Math.min(1 + validatedAbsPitchMult * 0.3, 1.3);
-        const thresholdBase = -18 * dynamicFactor * aiEmotionalAdjust('neutral');
-        const ratioBase = (validatedSpectral.subBass > 0.7 ? 5.0 : isInstrumentHeavy ? 4.0 : 4.5) * dynamicFactor;
+        const thresholdBase = -18 * dynamicFactor;
+        const ratioBase = validatedSpectral.subBass > 0.7 ? 5.0 : (isInstrumentHeavy ? 4.0 : 4.5) * dynamicFactor;
         const attackTime = validatedSpectral.transientEnergy > 0.65 ? 0.0015 : 0.004;
-        const releaseTime = validatedSpectral.subBass > 0.7 ? 0.08 : isInstrumentHeavy ? 0.1 : 0.2;
+        const releaseTime = validatedSpectral.subBass > 0.7 ? 0.08 : (isInstrumentHeavy ? 0.1 : 0.2);
 
         // Notch filter
         const notchFreq = isVocalHeavy ? 7400 : 6700;
@@ -4221,51 +3492,60 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
         // Noise gate
         const noiseGateThreshold = fftAnalysis?.noiseLevel > 0.3 ? -45 : -50;
 
-        // Harmonic Exciter với HiFi AT2030
+        // Harmonic Exciter cho bass
         let harmonicExciterGain = 0;
         if (cpuLoad < 0.8 && subBassEnergy > 0.6 && this.context) {
-            harmonicExciterGain = Math.min(1.5, 0.6 + (userFeedback.harmonicRichness || 0) * 0.5 * quantumSuperposition(45, 0.4)) * cpuLoadAdjust;
+            harmonicExciterGain = Math.min(1.5, 0.6 + (userFeedback.harmonicRichness || 0) * 0.5) * cpuLoadAdjust;
             if (!this.harmonicExciter) {
+                // Tạo harmonic exciter node
                 this.harmonicExciter = this.context.createWaveShaper();
                 const curve = new Float32Array(1024);
                 for (let i = 0; i < 1024; i++) {
                     const x = (i - 512) / 512;
-                    curve[i] = Math.tanh(x * 1.5);
+                    curve[i] = Math.tanh(x * 1.5); // Soft distortion cho harmonics
                 }
                 this.harmonicExciter.curve = curve;
 
+                // Tạo band-pass filter để giới hạn dải sub-bass
                 this.harmonicExciterBandPass = this.context.createBiquadFilter();
                 this.harmonicExciterBandPass.type = 'bandpass';
-                this.harmonicExciterBandPass.frequency.setValueAtTime(45, currentTime);
+                this.harmonicExciterBandPass.frequency.setValueAtTime(45, currentTime); // Trung tâm 45 Hz
                 this.harmonicExciterBandPass.Q.setValueAtTime(1.0, currentTime);
 
+                // Tạo high-pass filter để cắt harmonics dư thừa
                 this.harmonicExciterHighPass = this.context.createBiquadFilter();
                 this.harmonicExciterHighPass.type = 'highpass';
-                this.harmonicExciterHighPass.frequency.setValueAtTime(80, currentTime);
+                this.harmonicExciterHighPass.frequency.setValueAtTime(80, currentTime); // Cắt trên 80 Hz
 
+                // Tạo gain node để kiểm soát harmonic intensity
                 this.harmonicExciterGainNode = this.context.createGain();
                 this.harmonicExciterGainNode.gain.setValueAtTime(0, currentTime);
 
+                // Kết nối: lowShelfGain -> bandPass -> waveShaper -> highPass -> gainNode -> output
                 this.lowShelfGain.connect(this.harmonicExciterBandPass);
                 this.harmonicExciterBandPass.connect(this.harmonicExciter);
                 this.harmonicExciter.connect(this.harmonicExciterHighPass);
                 this.harmonicExciterHighPass.connect(this.harmonicExciterGainNode);
                 this.harmonicExciterGainNode.connect(this.outputNode);
             }
+            // Áp dụng gain cho harmonic exciter
             this.harmonicExciterGainNode.gain.cancelScheduledValues(currentTime);
             this.harmonicExciterGainNode.gain.setValueAtTime(this.harmonicExciterGainNode.gain.value, currentTime);
             this.harmonicExciterGainNode.gain.linearRampToValueAtTime(
-                harmonicExciterGain * normalizationFactor * spectralAttention(),
+                harmonicExciterGain * normalizationFactor,
                 currentTime + adjustedRampTime
             );
+            // Giảm subMidGain để tránh đục
             if (this.subMidFilter?.gain) {
                 this.subMidFilter.gain.linearRampToValueAtTime(
                     Math.min(3.5, this.subMidFilter.gain.value * 0.95 * subMidBoost * genreBoost * profile.bassReduction * normalizationFactor),
                     currentTime + adjustedRampTime
                 );
             }
-            formantGain = Math.min(3.8, formantGain + 0.2 * emotionTimbreMap('neutral'));
+            // Tăng nhẹ formantGain để vocal rõ hơn
+            formantGain = Math.min(3.8, formantGain + 0.2);
         } else if (this.harmonicExciterGainNode) {
+            // Tắt harmonic exciter nếu không đủ điều kiện
             this.harmonicExciterGainNode.gain.cancelScheduledValues(currentTime);
             this.harmonicExciterGainNode.gain.setValueAtTime(this.harmonicExciterGainNode.gain.value, currentTime);
             this.harmonicExciterGainNode.gain.linearRampToValueAtTime(0, currentTime + adjustedRampTime);
@@ -4341,6 +3621,8 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
                 this.formantFilter1.gain.linearRampToValueAtTime(formantGain * normalizationFactor, currentTime + adjustedRampTime);
             }
             if (Math.abs(this.formantFilter1.Q.value - 1.3) > 0.005) {
+                this.formantFilter1.Q.cancelScheduledValues(currentTime);
+                this.formantFilter1.Q.setValueAtTime(this.formantFilter1.Q.value, currentTime);
                 this.formantFilter1.Q.linearRampToValueAtTime(1.3, currentTime + adjustedRampTime);
             }
         }
@@ -4358,6 +3640,8 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
                 this.formantFilter2.gain.linearRampToValueAtTime(formantGain * 0.85 * normalizationFactor, currentTime + adjustedRampTime);
             }
             if (Math.abs(this.formantFilter2.Q.value - 1.3) > 0.005) {
+                this.formantFilter2.Q.cancelScheduledValues(currentTime);
+                this.formantFilter2.Q.setValueAtTime(this.formantFilter2.Q.value, currentTime);
                 this.formantFilter2.Q.linearRampToValueAtTime(1.3, currentTime + adjustedRampTime);
             }
         }
@@ -4436,8 +3720,6 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
                 trebleBoost,
                 transientBoost,
                 formantGain,
-                f1FreqBase,
-                f2FreqBase,
                 deEsserGain,
                 notchFreq,
                 notchQ,
@@ -4501,25 +3783,21 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
             });
         }
 
-        // Lưu previousEnergy cho spectralAttention
-        this.previousEnergy = fftAnalysis ? fftAnalysis.magnitude : validatedSpectral.energy;
-
     } catch (error) {
-        handleError('Lỗi khi áp dụng hiệu ứng vitamin', error, {
+        console.error('Lỗi khi áp dụng hiệu ứng vitamin:', error, {
             profileName,
             pitchMult,
             absPitchMult,
             cosmicEnhance,
             reverb: options.reverb,
             spectralProfile: this.spectralProfile
-        }, 'high', {
-            memoryManager: this.memoryManager
         });
         if (this.outputGain?.gain) {
             this.outputGain.gain.cancelScheduledValues(currentTime);
             this.outputGain.gain.setValueAtTime(this.outputGain.gain.value || 0.8, currentTime);
             this.outputGain.gain.linearRampToValueAtTime(0.8, currentTime + adjustedRampTime);
         }
+        // Tắt harmonic exciter nếu có lỗi
         if (this.harmonicExciterGainNode) {
             this.harmonicExciterGainNode.gain.cancelScheduledValues(currentTime);
             this.harmonicExciterGainNode.gain.setValueAtTime(this.harmonicExciterGainNode.gain.value, currentTime);
@@ -4543,441 +3821,342 @@ Jungle.prototype.applyVitamin = function(profileName, pitchMult, absPitchMult, c
  * @returns {Object|null} Spectral analysis results
  */
 Jungle.prototype.getFFTAnalysis = function() {
-    if (!this._analyser) return null;
-    const bufferLength = this._analyser.frequencyBinCount;
-    const dataArray = new Float32Array(bufferLength);
-    this._analyser.getFloatFrequencyData(dataArray);
+	if (!this._analyser) return null;
+	const bufferLength = this._analyser.frequencyBinCount;
+	const dataArray = new Float32Array(bufferLength);
+	this._analyser.getFloatFrequencyData(dataArray);
 
-    const sampleRate = this.context.sampleRate;
-    const binSize = sampleRate / (2 * bufferLength);
-    const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-    const listenerProfile = this.context?.listenerProfile || 'standard'; // HiFi AT2030
-    const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-    const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-    const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-    const sampleStep = isLowPowerDevice ? Math.round(4 * (1 / deviceAdaptFactor)) : 1; // Tối ưu sampleStep
-    const effectiveBufferLength = Math.floor(bufferLength / sampleStep);
+	const sampleRate = this.context.sampleRate;
+	const binSize = sampleRate / (2 * bufferLength);
 
-    // Initialize spectral features
-    let subBassEnergy = 0,
-        bassEnergy = 0,
-        midEnergy = 0,
-        highMidEnergy = 0,
-        trebleEnergy = 0,
-        airEnergy = 0;
-    let instrumentEnergy = 0,
-        vocalEnergy = 0,
-        highFreqEnergy = 0,
-        noiseLevel = 0;
-    let spectralEnergy = 0,
-        spectralFlux = 0,
-        spectralEntropy = 0,
-        transientCount = 0;
+	// Avoid using getCPULoad to prevent loadHistory error
+	const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+	const sampleStep = isLowPowerDevice ? 4 : 1; // Smart sampling for low-power devices
+	const effectiveBufferLength = Math.floor(bufferLength / sampleStep);
 
-    // Initialize internal cache if memoryManager is unavailable
-    if (!this._fftCache) {
-        this._fftCache = new Map();
-    }
+	// Initialize spectral features
+	let subBassEnergy = 0,
+		bassEnergy = 0,
+		midEnergy = 0,
+		highMidEnergy = 0,
+		trebleEnergy = 0,
+		airEnergy = 0;
+	let instrumentEnergy = 0,
+		vocalEnergy = 0,
+		highFreqEnergy = 0,
+		noiseLevel = 0;
+	let spectralEnergy = 0,
+		spectralFlux = 0,
+		spectralEntropy = 0,
+		transientCount = 0;
 
-    // Cache previous analysis with error handling
-    let prevAnalysis = {};
-    try {
-        if (this.memoryManager && typeof this.memoryManager.get === 'function') {
-            prevAnalysis = this.memoryManager.get('fftAnalysis')?.data || {};
-        } else {
-            prevAnalysis = this._fftCache.get('fftAnalysis')?.data || {};
-        }
-    } catch (error) {
-        console.warn('Error accessing FFT cache:', error);
-    }
-    const prevDataArray = this.fftAnalysis || new Float32Array(bufferLength);
+	// Initialize internal cache if memoryManager is unavailable
+	if (!this._fftCache) {
+		this._fftCache = new Map();
+	}
 
-    // PsychoacousticWeight (HiFi AT2030)
-    const computePsychoacousticWeight = () => {
-        try {
-            const psychoacousticWeight = new Float32Array(bufferLength);
-            const fletcherMunson = (freq) => {
-                if (freq < 20 || freq > 20000) return 0.1;
-                if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                return 1.0 - 0.00005 * (freq - 4000);
-            };
-            for (let i = 0; i < bufferLength; i++) {
-                const freq = i * binSize;
-                const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                psychoacousticWeight[i] = fletcherMunson(freq) * perceptualSensitivity * deviceAdaptFactor;
-            }
-            return psychoacousticWeight;
-        } catch (error) {
-            handleError('PsychoacousticWeight computation failed', error, { bufferLength, profile, listenerProfile }, 'low', { memoryManager: this.memoryManager });
-            return new Float32Array(bufferLength).fill(1.0);
-        }
-    };
-    const psychoacousticWeight = computePsychoacousticWeight();
+	// Cache previous analysis with error handling
+	let prevAnalysis = {};
+	try {
+		if (this.memoryManager && typeof this.memoryManager.get === 'function') {
+			prevAnalysis = this.memoryManager.get('fftAnalysis')?.data || {};
+		} else {
+			prevAnalysis = this._fftCache.get('fftAnalysis')?.data || {};
+		}
+	} catch (error) {
+		console.warn('Error accessing FFT cache:', error);
+	}
+	const prevDataArray = this.fftAnalysis || new Float32Array(bufferLength);
 
-    // Multi-layer frequency analysis
-    try {
-        for (let i = 0; i < bufferLength; i += sampleStep) {
-            const freq = i * binSize;
-            const energy = dataArray[i] > -Infinity ? Math.pow(2, dataArray[i] / 20) * psychoacousticWeight[i] : 0; // Áp dụng PsychoacousticWeight
+	// Multi-layer frequency analysis
+	try {
+		for (let i = 0; i < bufferLength; i += sampleStep) {
+			const freq = i * binSize;
+			const energy = dataArray[i] > -Infinity ? Math.pow(2, dataArray[i] / 20) : 0;
 
-            // Detailed frequency bins
-            if (freq < 30) noiseLevel += energy;
-            else if (freq < 80) subBassEnergy += energy;
-            else if (freq < 200) bassEnergy += energy;
-            else if (freq < 1000) midEnergy += energy;
-            else if (freq < 4000) highMidEnergy += energy;
-            else if (freq < 6000) trebleEnergy += energy;
-            else airEnergy += energy;
+			// Detailed frequency bins
+			if (freq < 30) noiseLevel += energy;
+			else if (freq < 80) subBassEnergy += energy;
+			else if (freq < 200) bassEnergy += energy;
+			else if (freq < 1000) midEnergy += energy;
+			else if (freq < 4000) highMidEnergy += energy;
+			else if (freq < 6000) trebleEnergy += energy;
+			else airEnergy += energy;
 
-            // Instrument and vocal ranges
-            if (freq >= 200 && freq <= 4000) instrumentEnergy += energy;
-            if (freq >= 300 && freq <= 3000) vocalEnergy += energy;
-            if (freq >= 6000) highFreqEnergy += energy;
+			// Instrument and vocal ranges
+			if (freq >= 200 && freq <= 4000) instrumentEnergy += energy;
+			if (freq >= 300 && freq <= 3000) vocalEnergy += energy;
+			if (freq >= 6000) highFreqEnergy += energy;
 
-            // Spectral energy for entropy
-            spectralEnergy += energy;
+			// Spectral energy for entropy
+			spectralEnergy += energy;
 
-            // Spectral flux for temporal dynamics
-            const delta = Math.abs(energy - (prevDataArray[i] || 0));
-            spectralFlux += delta;
+			// Spectral flux for temporal dynamics
+			const delta = Math.abs(energy - (prevDataArray[i] || 0));
+			spectralFlux += delta;
 
-            // Transient detection (tăng độ nhạy cho rockMetal, karaokeDynamic)
-            const transientThreshold = (profile === 'rockMetal' || profile === 'karaokeDynamic') ? 0.08 : 0.1;
-            if (delta > transientThreshold && freq >= 200 && freq <= 6000) transientCount++;
-        }
-    } catch (error) {
-        console.error('Error during FFT analysis:', error);
-        return {
-            subBassEnergy: 0.5,
-            bassEnergy: 0.5,
-            midEnergy: 0.5,
-            highMidEnergy: 0.5,
-            trebleEnergy: 0.5,
-            airEnergy: 0.5,
-            instrumentEnergy: 0.5,
-            vocalEnergy: 0.5,
-            highFreqEnergy: 0.5,
-            noiseLevel: 0.5,
-            spectralFlux: 0.5,
-            spectralEntropy: 0.5,
-            spectralCoherence: 0.5,
-            transientDensity: 0.5,
-            harmonicRichness: 0.5
-        };
-    }
+			// Transient detection
+			if (delta > 0.1 && freq >= 200 && freq <= 6000) transientCount++;
+		}
+	} catch (error) {
+		console.error('Error during FFT analysis:', error);
+		return {
+			subBassEnergy: 0.5,
+			bassEnergy: 0.5,
+			midEnergy: 0.5,
+			highMidEnergy: 0.5,
+			trebleEnergy: 0.5,
+			airEnergy: 0.5,
+			instrumentEnergy: 0.5,
+			vocalEnergy: 0.5,
+			highFreqEnergy: 0.5,
+			noiseLevel: 0.5,
+			spectralFlux: 0.5,
+			spectralEntropy: 0.5,
+			spectralCoherence: 0.5,
+			transientDensity: 0.5,
+			harmonicRichness: 0.5
+		};
+	}
 
-    // Normalize energies
-    const normalize = (value) => Math.min(1, value / effectiveBufferLength * 10);
-    subBassEnergy = normalize(subBassEnergy);
-    bassEnergy = normalize(bassEnergy);
-    midEnergy = normalize(midEnergy);
-    highMidEnergy = normalize(highMidEnergy);
-    trebleEnergy = normalize(trebleEnergy);
-    airEnergy = normalize(airEnergy);
-    instrumentEnergy = normalize(instrumentEnergy);
-    vocalEnergy = normalize(vocalEnergy);
-    highFreqEnergy = normalize(highFreqEnergy);
-    noiseLevel = normalize(noiseLevel);
-    spectralFlux = normalize(spectralFlux);
+	// Normalize energies
+	const normalize = (value) => Math.min(1, value / effectiveBufferLength * 10);
+	subBassEnergy = normalize(subBassEnergy);
+	bassEnergy = normalize(bassEnergy);
+	midEnergy = normalize(midEnergy);
+	highMidEnergy = normalize(highMidEnergy);
+	trebleEnergy = normalize(trebleEnergy);
+	airEnergy = normalize(airEnergy);
+	instrumentEnergy = normalize(instrumentEnergy);
+	vocalEnergy = normalize(vocalEnergy);
+	highFreqEnergy = normalize(highFreqEnergy);
+	noiseLevel = normalize(noiseLevel);
+	spectralFlux = normalize(spectralFlux);
 
-    // Calculate spectral entropy
-    const energies = [subBassEnergy, bassEnergy, midEnergy, highMidEnergy, trebleEnergy, airEnergy];
-    const totalEnergy = energies.reduce((sum, e) => sum + e, 0) || 1;
-    spectralEntropy = -energies.reduce((sum, e) => {
-        const p = e / totalEnergy;
-        return sum + (p > 0 ? p * Math.log2(p) : 0);
-    }, 0) / Math.log2(energies.length);
+	// Calculate spectral entropy
+	const energies = [subBassEnergy, bassEnergy, midEnergy, highMidEnergy, trebleEnergy, airEnergy];
+	const totalEnergy = energies.reduce((sum, e) => sum + e, 0) || 1;
+	spectralEntropy = -energies.reduce((sum, e) => {
+		const p = e / totalEnergy;
+		return sum + (p > 0 ? p * Math.log2(p) : 0);
+	}, 0) / Math.log2(energies.length);
 
-    // Calculate spectral coherence
-    const spectralCoherence = Math.min(1, 1 - spectralEntropy * 0.5);
+	// Calculate spectral coherence
+	const spectralCoherence = Math.min(1, 1 - spectralEntropy * 0.5);
 
-    // Calculate transient density (điều chỉnh theo profile)
-    const transientDensity = Math.min(1, transientCount / effectiveBufferLength * (profile === 'rockMetal' || profile === 'karaokeDynamic' ? 120 : 100));
+	// Calculate transient density
+	const transientDensity = Math.min(1, transientCount / effectiveBufferLength * 100);
 
-    // Estimate harmonic richness (điều chỉnh theo listenerProfile)
-    const harmonicRichness = Math.min(1, (midEnergy + highMidEnergy) * 0.6 + vocalEnergy * 0.4 * (listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0));
+	// Estimate harmonic richness
+	const harmonicRichness = Math.min(1, (midEnergy + highMidEnergy) * 0.6 + vocalEnergy * 0.4);
 
-    // Cache analysis results
-    if (spectralFlux > 0.05) {
-        const cacheData = {
-            data: {
-                subBassEnergy,
-                bassEnergy,
-                midEnergy,
-                highMidEnergy,
-                trebleEnergy,
-                airEnergy,
-                instrumentEnergy,
-                vocalEnergy,
-                highFreqEnergy,
-                noiseLevel,
-                spectralFlux,
-                spectralEntropy,
-                spectralCoherence,
-                transientDensity,
-                harmonicRichness
-            },
-            timestamp: Date.now(),
-            expiry: Date.now() + (isLowPowerDevice ? 15000 * deviceAdaptFactor : 20000 * deviceAdaptFactor), // Tối ưu expiry
-            priority: 'high'
-        };
-        try {
-            const cacheKey = this.generateCacheSignature?.('fftAnalysis', { profile, listenerProfile, cpuLoad }) || `fftAnalysis_${this.contextId}`;
-            if (this.memoryManager && typeof this.memoryManager.set === 'function') {
-                this.memoryManager.set(cacheKey, cacheData, 'high');
-                this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-            } else {
-                this._fftCache.set('fftAnalysis', cacheData);
-                if (this._fftCache.size > 10) {
-                    const keys = Array.from(this._fftCache.keys());
-                    this._fftCache.delete(keys[0]);
-                }
-            }
-        } catch (error) {
-            console.warn('Error caching FFT analysis:', error);
-        }
-    }
+	// Cache analysis results
+	if (spectralFlux > 0.05) {
+		const cacheData = {
+			data: {
+				subBassEnergy,
+				bassEnergy,
+				midEnergy,
+				highMidEnergy,
+				trebleEnergy,
+				airEnergy,
+				instrumentEnergy,
+				vocalEnergy,
+				highFreqEnergy,
+				noiseLevel,
+				spectralFlux,
+				spectralEntropy,
+				spectralCoherence,
+				transientDensity,
+				harmonicRichness
+			},
+			timestamp: Date.now(),
+			expiry: Date.now() + 20000,
+			priority: 'high'
+		};
+		try {
+			if (this.memoryManager && typeof this.memoryManager.set === 'function') {
+				this.memoryManager.set('fftAnalysis', cacheData, 'high');
+			} else {
+				this._fftCache.set('fftAnalysis', cacheData);
+				if (this._fftCache.size > 10) {
+					const keys = Array.from(this._fftCache.keys());
+					this._fftCache.delete(keys[0]);
+				}
+			}
+		} catch (error) {
+			console.warn('Error caching FFT analysis:', error);
+		}
+	}
 
-    // Store current dataArray for next iteration
-    this.fftAnalysis = dataArray.slice();
+	// Store current dataArray for next iteration
+	this.fftAnalysis = dataArray.slice();
 
-    // Debug logging
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    if (isDebug) {
-        console.debug('FFT Analysis Results:', {
-            subBassEnergy,
-            bassEnergy,
-            midEnergy,
-            highMidEnergy,
-            trebleEnergy,
-            airEnergy,
-            instrumentEnergy,
-            vocalEnergy,
-            highFreqEnergy,
-            noiseLevel,
-            spectralFlux,
-            spectralEntropy,
-            spectralCoherence,
-            transientDensity,
-            harmonicRichness,
-            analysisScore: (spectralCoherence * 0.4 + vocalEnergy * 0.3 + transientDensity * 0.3).toFixed(2),
-            effectiveBufferLength,
-            profile,
-            listenerProfile,
-            deviceAdaptFactor,
-            sampleStep,
-            cacheStats: this.memoryManager?.getCacheStats?.()
-        });
-    }
+	// Debug logging
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	if (isDebug) {
+		console.debug('FFT Analysis Results:', {
+			subBassEnergy,
+			bassEnergy,
+			midEnergy,
+			highMidEnergy,
+			trebleEnergy,
+			airEnergy,
+			instrumentEnergy,
+			vocalEnergy,
+			highFreqEnergy,
+			noiseLevel,
+			spectralFlux,
+			spectralEntropy,
+			spectralCoherence,
+			transientDensity,
+			harmonicRichness,
+			analysisScore: (spectralCoherence * 0.4 + vocalEnergy * 0.3 + transientDensity * 0.3).toFixed(2),
+			effectiveBufferLength
+		});
+	}
 
-    return {
-        subBassEnergy,
-        bassEnergy,
-        midEnergy,
-        highMidEnergy,
-        trebleEnergy,
-        airEnergy,
-        instrumentEnergy,
-        vocalEnergy,
-        highFreqEnergy,
-        noiseLevel,
-        spectralFlux,
-        spectralEntropy,
-        spectralCoherence,
-        transientDensity,
-        harmonicRichness
-    };
+	return {
+		subBassEnergy,
+		bassEnergy,
+		midEnergy,
+		highMidEnergy,
+		trebleEnergy,
+		airEnergy,
+		instrumentEnergy,
+		vocalEnergy,
+		highFreqEnergy,
+		noiseLevel,
+		spectralFlux,
+		spectralEntropy,
+		spectralCoherence,
+		transientDensity,
+		harmonicRichness
+	};
 };
 
+// Hàm kiểm tra thiết bị đầu ra
 Jungle.prototype.checkOutputDevice = async function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true'); // Di chuyển isDebug lên đầu
-    const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-    const listenerProfile = this.context?.listenerProfile || 'standard'; // HiFi AT2030
-    const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-    const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-    const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-
-    try {
-        // Kiểm tra cache
-        const cacheKey = this.generateCacheSignature?.('outputDevice', { profile, listenerProfile, cpuLoad }) || `outputDevice_${this.contextId}`;
-        const cachedResult = this.memoryManager?.get(cacheKey);
-        if (cachedResult?.timestamp > Date.now() - 30000) {
-            if (isDebug) console.debug('Reused cached output device result', { cacheKey, cachedResult });
-            return cachedResult.data.isHeadphone;
-        }
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const audioOutput = devices.find(device => device.kind === 'audiooutput');
-        const isHeadphone = audioOutput?.label.toLowerCase().includes('headphone') || false;
-
-        // Lưu kết quả vào memoryManager
-        if (this.memoryManager) {
-            this.memoryManager.set(cacheKey, {
-                data: { isHeadphone },
-                timestamp: Date.now(),
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'medium'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        // Debug logging
-        if (isDebug) {
-            console.debug('Output device checked', {
-                isHeadphone,
-                profile,
-                listenerProfile,
-                cpuLoad,
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-
-        return isHeadphone;
-    } catch (error) {
-        handleError('Error checking output device:', error, { profile, listenerProfile, cpuLoad }, 'low', { memoryManager: this.memoryManager });
-        return false;
-    }
+	try {
+		const devices = await navigator.mediaDevices.enumerateDevices();
+		const audioOutput = devices.find(device => device.kind === 'audiooutput');
+		return audioOutput?.label.toLowerCase().includes('headphone') || false;
+	} catch {
+		return false;
+	}
 };
 
 Jungle.prototype.setDelay = function(delayTime) {
-    try {
-        // Kiểm tra giá trị delayTime
-        if (typeof delayTime !== 'number' || isNaN(delayTime)) {
-            throw new Error('delayTime must be a valid number.');
-        }
-        delayTime = Math.max(0, Math.min(MAX_DELAY_TIME, delayTime)); // MAX_DELAY_TIME = 5
+	try {
+		// Kiểm tra giá trị delayTime
+		if (typeof delayTime !== 'number' || isNaN(delayTime)) {
+			throw new Error('delayTime must be a valid number.');
+		}
+		delayTime = Math.max(0, Math.min(MAX_DELAY_TIME, delayTime)); // MAX_DELAY_TIME = 5
 
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // HiFi AT2030
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-        };
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const isVocalFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory === 'vocal');
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
+		// Lấy thông tin thiết bị và cấu hình
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const profile = this.profile || 'smartStudio';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const spectralProfile = this.spectralProfile || {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			instruments: {},
+			chroma: null,
+			spectralComplexity: 0.5,
+			harmonicRatio: 0.5
+		};
+		const feedbackList = this.memoryManager?.get('userFeedback') || [];
+		const isVocalFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory === 'vocal');
 
-        // Kiểm tra node và AudioContext
-        if (!this.modGain1?.gain || !this.modGain2?.gain || !(this.context instanceof AudioContext)) {
-            throw new Error('modGain1, modGain2, or AudioContext is not initialized.');
-        }
+		// Kiểm tra node và AudioContext
+		if (!this.modGain1?.gain || !this.modGain2?.gain || !(this.context instanceof AudioContext)) {
+			throw new Error('modGain1, modGain2, or AudioContext is not initialized.');
+		}
 
-        // Dynamic Delay Adjustment với EmotionTimbreMap (HiFi AT2030)
-        let adjustedDelayTime = delayTime;
-        let rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME); // 0.075
-        const delayFactorMap = {
-            warm: 0.55,
-            bright: 0.65,
-            bassHeavy: 0.5,
-            vocal: 0.6,
-            proNatural: 0.55,
-            karaokeDynamic: 0.65,
-            rockMetal: 0.6,
-            smartStudio: 0.7
-        };
-        let delayFactor = delayFactorMap[profile] || 0.5;
-        const listenerAdjust = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
+		// Dynamic Delay Adjustment: Điều chỉnh delayTime và rampTime
+		let adjustedDelayTime = delayTime;
+		let rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME); // 0.075
+		if (profile === 'smartStudio' || profile === 'bright') {
+			adjustedDelayTime *= 1.1; // Tăng delay cho Smart.S, Bright
+			rampTime *= 1.3; // Tăng độ mượt
+		} else if (profile === 'vocal' || isVocalFeedback) {
+			adjustedDelayTime *= 1.05; // Tăng nhẹ cho Vocal
+			rampTime *= 1.2;
+		}
+		if (songStructure.section === 'chorus') {
+			adjustedDelayTime *= 1.15; // Tăng delay cho chorus
+			rampTime *= 1.1;
+		}
+		if (isLowPowerDevice && cpuLoad > 0.9) {
+			rampTime *= 0.7; // Giảm độ trễ cho thiết bị yếu
+		}
+		adjustedDelayTime = Math.max(0, Math.min(MAX_DELAY_TIME, adjustedDelayTime));
 
-        if (profile === 'smartStudio' || profile === 'bright') {
-            adjustedDelayTime *= 1.1 * listenerAdjust;
-            rampTime *= 1.3 * deviceAdaptFactor;
-        } else if (profile === 'vocal' || isVocalFeedback) {
-            adjustedDelayTime *= 1.05 * listenerAdjust;
-            rampTime *= 1.2 * deviceAdaptFactor;
-        } else if (profile === 'rockMetal' || profile === 'bassHeavy') {
-            adjustedDelayTime *= 1.08 * listenerAdjust; // Tăng nhẹ cho bass mạnh
-            rampTime *= 1.15 * deviceAdaptFactor;
-        }
-        if (songStructure.section === 'chorus') {
-            adjustedDelayTime *= 1.15 * listenerAdjust;
-            rampTime *= 1.1 * deviceAdaptFactor;
-        }
-        if (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7) {
-            adjustedDelayTime *= 1.1 * listenerAdjust; // Tăng delay cho âm thanh phức tạp
-            rampTime *= 1.1 * deviceAdaptFactor;
-        }
-        if (isLowPowerDevice && cpuLoad > 0.9) {
-            adjustedDelayTime *= 0.9 * deviceAdaptFactor; // Giảm delay cho thiết bị yếu
-            rampTime *= 0.7 * deviceAdaptFactor;
-        }
-        adjustedDelayTime = Math.max(0, Math.min(MAX_DELAY_TIME, adjustedDelayTime));
+		// Stable Delay Transition: Áp dụng delay
+		const delayFactor = profile === 'smartStudio' ? 0.6 : 0.5; // Tăng từ 0.5 cho Smart.S
+		this.modGain1.gain.linearRampToValueAtTime(delayFactor * adjustedDelayTime, this.context.currentTime + rampTime);
+		this.modGain2.gain.linearRampToValueAtTime(delayFactor * adjustedDelayTime, this.context.currentTime + rampTime);
 
-        // Stable Delay Transition
-        this.modGain1.gain.linearRampToValueAtTime(delayFactor * adjustedDelayTime, this.context.currentTime + rampTime);
-        this.modGain2.gain.linearRampToValueAtTime(delayFactor * adjustedDelayTime, this.context.currentTime + rampTime);
+		// Lưu trạng thái delay vào memoryManager
+		if (this.memoryManager) {
+			const cacheKey = `delayState_${this.contextId}_${profile}`;
+			this.memoryManager.set(cacheKey, {
+				data: {
+					delayTime: adjustedDelayTime,
+					rampTime,
+					delayFactor,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					spectralProfile,
+					isVocalFeedback
+				},
+				expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+				priority: 'high'
+			});
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+		}
 
-        // Lưu trạng thái delay vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`delayState_${this.contextId}`, { profile, listenerProfile, cpuLoad, songStructure }) || `delayState_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    delayTime: adjustedDelayTime,
-                    rampTime,
-                    delayFactor,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    spectralProfile,
-                    isVocalFeedback,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'high'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug('Delay set successfully', {
-                delayTime: adjustedDelayTime,
-                rampTime,
-                delayFactor,
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile,
-                songStructure,
-                spectralComplexity: spectralProfile.spectralComplexity,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                harmonicRatio: spectralProfile.harmonicRatio,
-                isVocalFeedback,
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error setting delay:', error, {
-            delayTime,
-            profile: this.profile,
-            listenerProfile: this.context?.listenerProfile || 'standard',
-            cpuLoad,
-            isLowPowerDevice,
-            contextState: this.context?.state,
-            isVocalFeedback
-        }, 'high', { memoryManager: this.memoryManager });
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug('Delay set successfully', {
+				delayTime: adjustedDelayTime,
+				rampTime,
+				delayFactor,
+				cpuLoad,
+				isLowPowerDevice,
+				profile,
+				songStructure,
+				spectralComplexity: spectralProfile.spectralComplexity,
+				isVocalFeedback,
+				cacheStats: this.memoryManager?.getCacheStats?.()
+			});
+		}
+	} catch (error) {
+		handleError('Error setting delay:', error, {
+			delayTime,
+			profile: this.profile,
+			cpuLoad: this.getCPULoad?.() || 0.5,
+			isLowPowerDevice: navigator.hardwareConcurrency < 4,
+			contextState: this.context?.state,
+			isVocalFeedback
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+	}
 };
 
 // Hàm cài đặt pitch offset với bảo vệ formant và tối ưu hiệu suất
@@ -5521,153 +4700,44 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
 
         // Initialize config with defaults
         const intensity = ensureFinite(config.intensity, 0.15, { errorMessage: 'Invalid harmonic enhancement intensity' });
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.currentProfile) ? this.currentProfile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
         const frequencyRange = Array.isArray(config.frequencyRange) && config.frequencyRange.length === 2
             ? [ensureFinite(config.frequencyRange[0], 2500), ensureFinite(config.frequencyRange[1], 7500)]
-            : {
-                warm: [2000, 6000],
-                bright: [3000, 9000],
-                bassHeavy: [1000, 4000],
-                vocal: [2500, 7500],
-                proNatural: [2000, 7000],
-                karaokeDynamic: [2500, 7500],
-                rockMetal: [1500, 5000],
-                smartStudio: [2000, 8000]
-            }[profile] || [2500, 7500]; // Điều chỉnh theo profile
-        const harmonicOrder = ensureFinite(config.harmonicOrder, isLowPowerDevice ? 1 : 2, { errorMessage: 'Invalid harmonic order' }); // Giảm harmonicOrder trên thiết bị yếu
-        const transientPreservation = ensureFinite(config.transientPreservation, profile === 'rockMetal' ? 0.8 : 0.6);
+            : [2500, 7500]; // Default range for vocal and instrument clarity
+        const harmonicOrder = ensureFinite(config.harmonicOrder, 2, { errorMessage: 'Invalid harmonic order' });
+        const transientPreservation = ensureFinite(config.transientPreservation, this.currentProfile === 'rockMetal' ? 0.8 : 0.6);
         const phaseLock = this.qualityMode === 'high' || this.qualityMode === 'ultra-high';
 
         // Get spectral profile and other parameters
         const spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: profile === 'bassHeavy' ? 0.8 : 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: profile === 'vocal' ? 0.75 : 0.5,
-            high: 0.5,
-            subTreble: profile === 'bright' ? 0.7 : 0.5,
-            air: 0.5,
-            vocalPresence: profile === 'vocal' ? 0.8 : 0.5,
-            transientEnergy: profile === 'rockMetal' ? 0.7 : 0.5,
-            instruments: {},
-            chroma: Array(12).fill(0.5),
-            spectralComplexity: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
+            subBass: 0.5, bass: this.currentProfile === 'bassHeavy' ? 0.8 : 0.5, subMid: 0.5,
+            midLow: 0.5, midHigh: this.currentProfile === 'vocal' ? 0.75 : 0.5, high: 0.5,
+            subTreble: this.currentProfile === 'bright' ? 0.7 : 0.5, air: 0.5,
+            vocalPresence: this.currentProfile === 'vocal' ? 0.8 : 0.5, transientEnergy: 0.5,
+            instruments: {}, chroma: Array(12).fill(0.5), spectralComplexity: 0.5
         };
-        const isVocal = this.isVocal || profile === 'vocal' || profile === 'karaokeDynamic';
+        const isVocal = this.isVocal || this.currentProfile === 'vocal' || this.currentProfile === 'karaokeDynamic';
         const spectralComplexity = ensureFinite(spectralProfile.spectralComplexity, 0.5);
-        const spectralEntropy = ensureFinite(spectralProfile.spectralEntropy, 0.5); // HiFi AT2030
-        const vocalPresence = ensureFinite(spectralProfile.vocalPresence, profile === 'vocal' ? 0.8 : 0.5);
-        const transientEnergy = ensureFinite(spectralProfile.transientEnergy, profile === 'rockMetal' ? 0.7 : 0.5);
-        const harmonicRatio = ensureFinite(spectralProfile.harmonicRatio, 0.5); // HiFi AT2030
+        const vocalPresence = ensureFinite(spectralProfile.vocalPresence, this.currentProfile === 'vocal' ? 0.8 : 0.5);
+        const transientEnergy = ensureFinite(spectralProfile.transientEnergy, this.currentProfile === 'rockMetal' ? 0.7 : 0.5);
 
-        // Tích hợp userFeedback
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory) || { semanticCategory: null };
-        const isVocalFeedback = recentFeedback.semanticCategory === 'vocal';
-        const isClarityFeedback = recentFeedback.semanticCategory === 'clarity';
-        const isBassFeedback = recentFeedback.semanticCategory === 'bass';
-
-        // Calculate harmonic gain based on intensity, profile, and listenerProfile
-        const listenerAdjust = listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.8 : 1.0;
-        const profileAdjust = {
-            warm: { intensity: 0.9, harmonicGain: 0.8, harmonicQ: 1.0 },
-            bright: { intensity: 1.1, harmonicGain: 1.2, harmonicQ: 0.7 },
-            bassHeavy: { intensity: 0.8, harmonicGain: 0.7, harmonicQ: 1.2 },
-            vocal: { intensity: 1.2, harmonicGain: 1.3, harmonicQ: 0.8 },
-            proNatural: { intensity: 1.0, harmonicGain: 1.0, harmonicQ: 1.0 },
-            karaokeDynamic: { intensity: 1.2, harmonicGain: 1.3, harmonicQ: 0.8 },
-            rockMetal: { intensity: 1.0, harmonicGain: 0.9, harmonicQ: 1.0 },
-            smartStudio: { intensity: 1.0, harmonicGain: 1.0, harmonicQ: 0.9 }
-        }[profile] || { intensity: 1.0, harmonicGain: 1.0, harmonicQ: 1.0 };
-        let harmonicGain = Math.min(intensity * (isVocal || isVocalFeedback ? 1.2 : 1.0) * profileAdjust.harmonicGain * listenerAdjust * deviceAdaptFactor, 0.3); // Cap to avoid over-enhancement
-        let harmonicQ = (isVocal || isVocalFeedback ? 0.8 : 1.0) * profileAdjust.harmonicQ;
-        if (spectralEntropy > 0.7 || harmonicRatio > 0.7) {
-            harmonicGain *= 1.1; // Tăng gain cho âm thanh phức tạp
-            harmonicQ *= 0.9; // Giảm Q để tăng độ mượt
-        }
+        // Calculate harmonic gain based on intensity and profile
+        const harmonicGain = Math.min(intensity * (isVocal ? 1.2 : 1.0), 0.3); // Cap to avoid over-enhancement
+        const harmonicQ = isVocal ? 0.8 : 1.0; // Narrower Q for vocal clarity
         const freqStep = (frequencyRange[1] - frequencyRange[0]) / harmonicOrder;
         const currentTime = this.context.currentTime;
-        const rampTime = ensureFinite(this.rampTime, 0.15) * (1 + intensity * 0.5) * deviceAdaptFactor; // Tối ưu rampTime
-
-        // Tích hợp PsychoacousticWeight và EmotionTimbreMap (HiFi AT2030)
-        const computePsychoacousticWeight = () => {
-            try {
-                const psychoacousticWeight = new Float32Array(harmonicOrder);
-                const freqStep = (frequencyRange[1] - frequencyRange[0]) / harmonicOrder;
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                for (let i = 0; i < harmonicOrder; i++) {
-                    const freq = frequencyRange[0] + (i + 1) * freqStep;
-                    const maskingThreshold = fletcherMunson(freq);
-                    const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                    psychoacousticWeight[i] = ensureFinite(maskingThreshold * perceptualSensitivity * deviceAdaptFactor, 1.0);
-                }
-                return psychoacousticWeight;
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { harmonicOrder, frequencyRange }, 'low', { memoryManager: this.memoryManager });
-                return new Float32Array(harmonicOrder).fill(1.0);
-            }
-        };
-
-        const computeEmotionTimbreMap = () => {
-            try {
-                const timbreCurve = new Float32Array(harmonicOrder);
-                const freqStep = (frequencyRange[1] - frequencyRange[0]) / harmonicOrder;
-                const splinePoints = {
-                    warm: { freq: [2000, 4000, 6000], gain: [1.1, 1.0, 0.9] },
-                    bright: { freq: [3000, 6000, 9000], gain: [0.9, 1.0, 1.2] },
-                    bassHeavy: { freq: [1000, 2500, 4000], gain: [1.2, 1.0, 0.8] },
-                    vocal: { freq: [2500, 5000, 7500], gain: [1.0, 1.2, 1.1] },
-                    proNatural: { freq: [2000, 4500, 7000], gain: [1.0, 1.0, 1.0] },
-                    karaokeDynamic: { freq: [2500, 5000, 7500], gain: [1.0, 1.3, 1.1] },
-                    rockMetal: { freq: [1500, 3500, 5000], gain: [1.1, 1.0, 0.9] },
-                    smartStudio: { freq: [2000, 5000, 8000], gain: [1.0, 1.1, 1.05] },
-                    neutral: { freq: [2500, 5000, 7500], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                for (let i = 0; i < harmonicOrder; i++) {
-                    const freq = frequencyRange[0] + (i + 1) * freqStep;
-                    let gain = 1.0;
-                    for (let j = 1; j < profilePoints.freq.length; j++) {
-                        if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                            const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                            gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                        }
-                    }
-                    timbreCurve[i] = ensureFinite(gain * deviceAdaptFactor, 1.0);
-                }
-                return timbreCurve;
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { harmonicOrder, frequencyRange }, 'low', { memoryManager: this.memoryManager });
-                return new Float32Array(harmonicOrder).fill(1.0);
-            }
-        };
-
-        const psychoacousticWeight = computePsychoacousticWeight();
-        const timbreCurve = computeEmotionTimbreMap();
+        const rampTime = ensureFinite(this.rampTime, 0.15) * (1 + intensity * 0.5);
 
         // Create harmonic filters
         const harmonicFilters = [];
-        const adjustedHarmonicOrder = isLowPowerDevice && cpuLoad > 0.8 ? Math.max(1, Math.floor(harmonicOrder * 0.5)) : harmonicOrder; // Giảm harmonicOrder trên thiết bị yếu
-        for (let i = 1; i <= adjustedHarmonicOrder; i++) {
+        for (let i = 1; i <= harmonicOrder; i++) {
             const freq = ensureFinite(frequencyRange[0] + (i * freqStep), frequencyRange[0]);
             if (freq > frequencyRange[1]) continue;
 
             const filter = this.context.createBiquadFilter();
             filter.type = 'peaking';
             filter.frequency.setValueAtTime(freq, currentTime);
-            filter.Q.setValueAtTime(harmonicQ * (psychoacousticWeight[i - 1] || 1.0), currentTime);
-            filter.gain.setValueAtTime(harmonicGain * (timbreCurve[i - 1] || 1.0) * (1 - (i - 1) * 0.1), currentTime); // Áp dụng PsychoacousticWeight và EmotionTimbreMap
+            filter.Q.setValueAtTime(harmonicQ, currentTime);
+            filter.gain.setValueAtTime(harmonicGain * (1 - (i - 1) * 0.1), currentTime); // Gradual gain reduction
             harmonicFilters.push(filter);
         }
 
@@ -5680,72 +4750,63 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
         lastNode.connect(this.outputGain || this.context.destination);
 
         // Apply transient preservation
-        if ((transientEnergy < 0.7 || isClarityFeedback) && transientPreservation > 0.5) {
+        if (transientEnergy < 0.7 && transientPreservation > 0.5) {
             const transientFilter = this.context.createBiquadFilter();
             transientFilter.type = 'highshelf';
             transientFilter.frequency.setValueAtTime(8000, currentTime);
-            transientFilter.gain.setValueAtTime(transientPreservation * 0.8 * listenerAdjust * deviceAdaptFactor, currentTime);
+            transientFilter.gain.setValueAtTime(transientPreservation * 0.8, currentTime);
             lastNode.connect(transientFilter);
             lastNode = transientFilter;
-            if (isDebug) console.debug('Applied transient preservation filter', { gain: transientPreservation * 0.8, frequency: 8000, listenerProfile, deviceAdaptFactor });
+            if (isDebug) console.debug('Applied transient preservation filter', { gain: transientPreservation * 0.8, frequency: 8000 });
         }
 
         // Apply dynamic EQ for vocal clarity
-        if ((isVocal || isVocalFeedback || isClarityFeedback) && vocalPresence < 0.7) {
+        if (isVocal && vocalPresence < 0.7) {
             const vocalFilter = this.context.createBiquadFilter();
             vocalFilter.type = 'peaking';
             vocalFilter.frequency.setValueAtTime(3000, currentTime); // Vocal presence range
-            vocalFilter.Q.setValueAtTime(1.2 * profileAdjust.harmonicQ, currentTime);
-            vocalFilter.gain.setValueAtTime(vocalPresence * 1.2 * listenerAdjust * deviceAdaptFactor, currentTime);
+            vocalFilter.Q.setValueAtTime(1.2, currentTime);
+            vocalFilter.gain.setValueAtTime(vocalPresence * 1.2, currentTime);
             lastNode.connect(vocalFilter);
             lastNode = vocalFilter;
-            if (isDebug) console.debug('Applied vocal clarity filter', { gain: vocalPresence * 1.2, frequency: 3000, listenerProfile, deviceAdaptFactor });
+            if (isDebug) console.debug('Applied vocal clarity filter', { gain: vocalPresence * 1.2, frequency: 3000 });
         }
 
         // Apply bass control to avoid muddiness
-        if ((spectralProfile.bass > 0.7 || isBassFeedback) && this.lowShelfFilter) {
-            const bassReduction = Math.min(spectralProfile.bass * 0.8 * profileAdjust.harmonicGain * deviceAdaptFactor, 0.6); // Tối ưu bass
+        if (spectralProfile.bass > 0.7 && this.lowShelfFilter) {
+            const bassReduction = Math.min(spectralProfile.bass * 0.8, 0.6); // Reduce bass to keep clarity
             this.lowShelfFilter.gain.cancelScheduledValues(currentTime);
             this.lowShelfFilter.gain.setValueAtTime(this.lowShelfFilter.gain.value, currentTime);
             this.lowShelfFilter.gain.linearRampToValueAtTime(bassReduction, currentTime + rampTime);
-            if (isDebug) console.debug('Reduced bass to avoid muddiness', { gain: bassReduction, listenerProfile, deviceAdaptFactor });
+            if (isDebug) console.debug('Reduced bass to avoid muddiness', { gain: bassReduction });
         }
 
         // Apply phase-locked processing for high quality
         if (phaseLock && this.dynamicFormantPitchShift?.phaseLock) {
             const phaseLockGain = this.context.createGain();
-            phaseLockGain.gain.setValueAtTime(1.0 * deviceAdaptFactor, currentTime);
+            phaseLockGain.gain.setValueAtTime(1.0, currentTime);
             lastNode.connect(phaseLockGain);
             lastNode = phaseLockGain;
-            if (isDebug) console.debug('Applied phase-locked processing for harmonic enhancement', { listenerProfile, deviceAdaptFactor });
+            if (isDebug) console.debug('Applied phase-locked processing for harmonic enhancement');
         }
 
         // Store configuration in MemoryManager
         if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`harmonicEnhancement_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                intensity,
-                frequencyRange,
-                harmonicOrder: adjustedHarmonicOrder,
-                cpuLoad
-            }) || `harmonicEnhancement_${this.contextId}_${Date.now()}`;
+            const cacheKey = `harmonicEnhancement_${this.contextId}_${Date.now()}`;
             this.memoryManager.set(cacheKey, {
                 intensity,
                 frequencyRange,
-                harmonicOrder: adjustedHarmonicOrder,
+                harmonicOrder,
                 transientPreservation,
                 phaseLock,
                 harmonicGain,
                 harmonicQ,
-                psychoacousticWeight: psychoacousticWeight.slice(0, 5), // Lưu mẫu
-                timbreCurve: timbreCurve.slice(0, 5), // Lưu mẫu
                 timestamp: Date.now(),
-                expiry: Date.now() + (isLowPowerDevice ? 10000 * deviceAdaptFactor : 15000 * deviceAdaptFactor), // Tối ưu expiry
+                expiry: Date.now() + 15000,
                 priority: 'high'
             }, 'high');
             this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 32 * 1024 * 1024);
-            if (isDebug) console.debug('Stored harmonic enhancement config', { cacheKey, cacheStats: this.memoryManager.getCacheStats?.(), listenerProfile, deviceAdaptFactor });
+            if (isDebug) console.debug('Stored harmonic enhancement config', { cacheKey, cacheStats: this.memoryManager.getCacheStats?.() });
         }
 
         // Notify UI with enhancement details
@@ -5754,13 +4815,11 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
                 harmonicEnhancement: {
                     intensity,
                     frequencyRange,
-                    harmonicOrder: adjustedHarmonicOrder,
+                    harmonicOrder,
                     transientPreservation,
                     phaseLock,
                     harmonicGain,
-                    harmonicQ,
                     vocalPresence,
-                    spectralEntropy,
                     timestamp: Date.now()
                 }
             });
@@ -5769,21 +4828,14 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
         if (isDebug) console.debug('Harmonic Enhancement Applied Successfully', {
             intensity,
             frequencyRange,
-            harmonicOrder: adjustedHarmonicOrder,
+            harmonicOrder,
             harmonicGain,
             harmonicQ,
             transientPreservation,
             phaseLock,
             spectralComplexity,
-            spectralEntropy,
-            harmonicRatio,
             vocalPresence,
-            profile,
-            listenerProfile,
-            deviceAdaptFactor,
-            isVocalFeedback,
-            isClarityFeedback,
-            isBassFeedback,
+            profile: this.currentProfile,
             qualityMode: this.qualityMode
         });
 
@@ -5794,9 +4846,7 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
         handleError('Error applying harmonic enhancement', error, {
             config,
             contextId: this.contextId,
-            profile,
-            listenerProfile,
-            cpuLoad
+            profile: this.currentProfile
         }, 'high', { memoryManager: this.memoryManager });
         this.notifyUIError?.('Failed to apply harmonic enhancement');
         return this.outputGain || this.context.destination; // Fallback to avoid breaking audio chain
@@ -5804,1621 +4854,1308 @@ Jungle.prototype.applyHarmonicEnhancement = function(config = {}) {
 };
 
 Jungle.prototype.setBoost = function(boost, band = "all") {
-    try {
-        // Kiểm tra giá trị boost
-        if (typeof boost !== 'number' || isNaN(boost)) {
-            throw new Error('Boost must be a valid number.');
-        }
-        boost = Math.max(0.7, Math.min(10.0, boost)); // Giới hạn [0.7, 10]
+	try {
+		// Kiểm tra giá trị boost
+		if (typeof boost !== 'number' || isNaN(boost)) {
+			throw new Error('Boost must be a valid number.');
+		}
+		boost = Math.max(0.7, Math.min(10.0, boost)); // Giữ giới hạn [0.7, 10]
 
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio';
-        const listenerProfile = this.context?.listenerProfile || 'standard';
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5
-        };
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const isVocalFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory === 'vocal');
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2)));
+		// Lấy thông tin thiết bị và cấu hình
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const profile = this.profile || 'smartStudio';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const spectralProfile = this.spectralProfile || {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			instruments: {},
+			chroma: null,
+			spectralComplexity: 0.5,
+			harmonicRatio: 0.5
+		};
+		const feedbackList = this.memoryManager?.get('userFeedback') || [];
+		const isVocalFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory === 'vocal');
 
-        // Kiểm tra AudioContext
-        if (!(this.context instanceof AudioContext)) {
-            throw new Error('AudioContext is not initialized.');
-        }
-        const currentTime = this.context.currentTime;
+		// Kiểm tra AudioContext
+		if (!(this.context instanceof AudioContext)) {
+			throw new Error('AudioContext is not initialized.');
+		}
+		const currentTime = this.context.currentTime;
 
-        // Tính toán rampTime động với HiFi AT2030
-        let rampTime = ensureFinite(this.rampTime, 0.075);
-        const entropyFactor = spectralProfile.spectralEntropy > 0.7 ? 1.2 : spectralProfile.spectralEntropy > 0.5 ? 1.0 : 0.8;
-        const transientFactor = spectralProfile.transientEnergy > 0.7 ? 1.3 : 1.0;
-        rampTime *= entropyFactor * transientFactor * (isLowPowerDevice ? 0.7 : 1.0) * deviceAdaptFactor;
-        if (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal') {
-            rampTime *= 1.3;
-        } else if (songStructure.section === 'chorus') {
-            rampTime *= 1.2;
-        } else if (isLowPowerDevice && cpuLoad > 0.9) {
-            rampTime *= 0.6 * deviceAdaptFactor;
-        }
-        rampTime = Math.max(0.01, Math.min(0.15, rampTime)); // Giới hạn rampTime
+		// Dynamic Boost Adjustment: Điều chỉnh rampTime
+		let rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME); // 0.075
+		if (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal') {
+			rampTime *= 1.3; // Tăng độ mượt từ 1.2
+		} else if (isLowPowerDevice && cpuLoad > 0.9) {
+			rampTime *= 0.7; // Giảm độ trễ từ 0.8
+		}
+		if (songStructure.section === 'chorus') {
+			boost *= 1.15; // Tăng boost cho chorus
+			boost = Math.max(0.7, Math.min(10.0, boost)); // Giới hạn lại
+		}
+		if (isVocalFeedback && band === 'vocal') {
+			boost *= 1.2; // Tăng boost khi có feedback vocal
+			boost = Math.max(0.7, Math.min(10.0, boost));
+		}
 
-        // Điều chỉnh boost theo songStructure và feedback
-        let finalBoost = boost;
-        if (songStructure.section === 'chorus') {
-            finalBoost *= 1.15 * (profile === 'vocal' || profile === 'karaokeDynamic' ? 1.1 : 1.0);
-        } else if (songStructure.section === 'bridge') {
-            finalBoost *= 1.1;
-        }
-        if (isVocalFeedback && band === 'vocal') {
-            finalBoost *= 1.2;
-        }
-        finalBoost = Math.max(0.7, Math.min(10.0, finalBoost));
+		// Stable Boost Transition: Áp dụng boost
+		if (band === 'all' || band === 'total') {
+			if (!this.boostGain?.gain) throw new Error('boostGain is not initialized');
+			this.boostGain.gain.linearRampToValueAtTime(boost, currentTime + rampTime);
+		} else if (band === 'bass') {
+			if (!this.lowShelfGain?.gain || !this.subBassFilter?.gain) throw new Error('lowShelfGain or subBassFilter is not initialized');
+			const bassBoost = boost * (profile === 'bassHeavy' ? 2.2 : 2.0); // Tăng từ 2.0
+			this.lowShelfGain.gain.linearRampToValueAtTime(bassBoost, currentTime + rampTime);
+			this.subBassFilter.gain.linearRampToValueAtTime(boost * 1.6, currentTime + rampTime); // Tăng từ 1.5
+		} else if (band === 'subMid') {
+			if (!this.subMidFilter?.gain) throw new Error('subMidFilter is not initialized');
+			const subMidBoost = boost * (spectralProfile.spectralComplexity > 0.7 ? 1.7 : 1.5); // Tăng từ 1.5
+			this.subMidFilter.gain.linearRampToValueAtTime(subMidBoost, currentTime + rampTime);
+		} else if (band === 'mid') {
+			if (!this.midShelfGain?.gain) throw new Error('midShelfGain is not initialized');
+			this.midShelfGain.gain.linearRampToValueAtTime(boost * 1.6, currentTime + rampTime); // Tăng từ 1.5
+		} else if (band === 'highMid') {
+			if (!this.highMidFilter?.gain) throw new Error('highMidFilter is not initialized');
+			const highMidBoost = boost * (profile === 'bright' ? 1.7 : 1.5); // Tăng từ 1.5
+			this.highMidFilter.gain.linearRampToValueAtTime(highMidBoost, currentTime + rampTime);
+		} else if (band === 'treble') {
+			if (!this.highShelfGain?.gain || !this.subTrebleFilter?.gain) throw new Error('highShelfGain or subTrebleFilter is not initialized');
+			const trebleBoost = boost * (profile === 'bright' ? 2.0 : 1.8); // Tăng từ 1.8
+			this.highShelfGain.gain.linearRampToValueAtTime(trebleBoost, currentTime + rampTime);
+			this.subTrebleFilter.gain.linearRampToValueAtTime(boost * 1.6, currentTime + rampTime); // Tăng từ 1.5
+		} else if (band === 'air') {
+			if (!this.airFilter?.gain) throw new Error('airFilter is not initialized');
+			const airBoost = boost * (profile === 'smartStudio' ? 1.4 : 1.2); // Tăng từ 1.2
+			this.airFilter.gain.linearRampToValueAtTime(airBoost, currentTime + rampTime);
+		} else if (band === 'vocal') {
+			if (!this.formantFilter1?.gain || !this.formantFilter2?.gain || !this.formantFilter3?.gain) {
+				throw new Error('formantFilter1, formantFilter2, or formantFilter3 is not initialized');
+			}
+			const vocalBoost = boost * (isVocalFeedback || profile === 'vocal' ? 1.5 : 1.3); // Tăng từ 1.3
+			this.formantFilter1.gain.linearRampToValueAtTime(vocalBoost, currentTime + rampTime);
+			this.formantFilter2.gain.linearRampToValueAtTime(vocalBoost, currentTime + rampTime);
+			this.formantFilter3.gain.linearRampToValueAtTime(vocalBoost, currentTime + rampTime);
+		} else {
+			throw new Error(`Invalid band: ${band}`);
+		}
 
-        // Tích hợp PsychoacousticWeight (HiFi AT2030)
-        const computePsychoacousticWeight = (band) => {
-            try {
-                const freqRanges = {
-                    bass: [20, 200],
-                    subMid: [200, 500],
-                    mid: [500, 2000],
-                    highMid: [2000, 4000],
-                    treble: [4000, 11000],
-                    air: [11000, 20000],
-                    vocal: [200, 4000]
-                }[band] || [20, 20000];
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                const midFreq = (freqRanges[0] + freqRanges[1]) / 2;
-                const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                return ensureFinite(fletcherMunson(midFreq) * perceptualSensitivity * deviceAdaptFactor, 1.0);
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { band }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
+		// Lưu trạng thái boost vào memoryManager
+		if (this.memoryManager) {
+			const cacheKey = `boostState_${this.contextId}_${profile}_${band}`;
+			this.memoryManager.set(cacheKey, {
+				data: {
+					boost,
+					band,
+					rampTime,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					spectralProfile,
+					isVocalFeedback
+				},
+				expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+				priority: 'high'
+			});
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+		}
 
-        // Tích hợp EmotionTimbreMap (HiFi AT2030)
-        const computeEmotionTimbreMap = (band) => {
-            try {
-                const profilePoints = {
-                    warm: { freq: 500, gain: 1.2 },
-                    bright: { freq: 4000, gain: 1.2 },
-                    bassHeavy: { freq: 100, gain: 1.3 },
-                    vocal: { freq: 1000, gain: 1.2 },
-                    proNatural: { freq: 1000, gain: 1.0 },
-                    karaokeDynamic: { freq: 1000, gain: 1.3 },
-                    rockMetal: { freq: 4000, gain: 1.15 },
-                    smartStudio: { freq: 2000, gain: 1.1 },
-                    neutral: { freq: 1000, gain: 1.0 }
-                };
-                const point = profilePoints[profile] || profilePoints.neutral;
-                const bandFreqRanges = {
-                    bass: 100,
-                    subMid: 350,
-                    mid: 1000,
-                    highMid: 3000,
-                    treble: 7000,
-                    air: 15000,
-                    vocal: 1000
-                };
-                const freqDistance = Math.abs(point.freq - (bandFreqRanges[band] || 1000)) / 1000;
-                return ensureFinite(point.gain * (1 - 0.1 * freqDistance) * deviceAdaptFactor, 1.0);
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { band }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
-
-        // AntiClippingGuard (HiFi AT2030)
-        const computeAntiClippingGuard = (boost, band) => {
-            let guardFactor = 1.0;
-            if (boost > 8.0 && (band === 'treble' || band === 'air' || band === 'all' || band === 'total')) {
-                const spectralAttention = spectralProfile.high > 0.7 || spectralProfile.air > 0.7 ? 0.85 : 0.95;
-                guardFactor *= spectralAttention * (1 - (boost - 8.0) / 4.0);
-                guardFactor *= computePsychoacousticWeight(band);
-            }
-            if (spectralProfile.spectralEntropy > 0.7) {
-                guardFactor *= 0.9;
-            }
-            if (spectralProfile.transientEnergy > 0.8) {
-                guardFactor *= 0.95;
-            }
-            return Math.max(0.7, guardFactor);
-        };
-
-        // TransientSculpt (HiFi AT2030)
-        const computeTransientSculpt = (band) => {
-            const transientFactor = spectralProfile.transientEnergy > 0.7 ? 1.2 : 1.0;
-            const profileTransientBoost = {
-                rockMetal: 1.4,
-                bassHeavy: 1.4,
-                smartStudio: 1.2,
-                karaokeDynamic: 1.2,
-                bright: 1.2,
-                vocal: 1.0,
-                proNatural: 1.0,
-                warm: 1.0
-            }[profile] || 1.0;
-            return transientFactor * profileTransientBoost * deviceAdaptFactor;
-        };
-
-        // PhaseCoherence (HiFi AT2030)
-        const computePhaseCoherence = () => {
-            const coherenceFactor = spectralProfile.spectralEntropy > 0.7 ? 0.9 : 1.0;
-            const phaseLock = this.qualityMode === 'high' ? 1.0 : 0.8;
-            return coherenceFactor * phaseLock * deviceAdaptFactor;
-        };
-
-        // Tính finalBoost với HiFi AT2030
-        if (band !== 'all' && band !== 'total') {
-            finalBoost *= computePsychoacousticWeight(band) * computeEmotionTimbreMap(band) * computeAntiClippingGuard(finalBoost, band) * computeTransientSculpt(band);
-            finalBoost = Math.max(0.7, Math.min(10.0, finalBoost));
-        } else {
-            finalBoost *= computeAntiClippingGuard(finalBoost, band) * computePhaseCoherence();
-            finalBoost = Math.max(0.7, Math.min(10.0, finalBoost));
-        }
-
-        // Áp dụng boost với chuyển đổi mượt mà
-        const phaseCoherenceFactor = computePhaseCoherence();
-        if (band === 'all' || band === 'total') {
-            if (!this.boostGain?.gain) throw new Error('boostGain is not initialized');
-            this.boostGain.gain.cancelScheduledValues(currentTime);
-            this.boostGain.gain.setValueAtTime(this.boostGain.gain.value, currentTime);
-            this.boostGain.gain.linearRampToValueAtTime(finalBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'bass') {
-            if (!this.lowShelfGain?.gain || !this.subBassFilter?.gain) throw new Error('lowShelfGain or subBassFilter is not initialized');
-            const bassBoost = finalBoost * (profile === 'bassHeavy' ? 2.2 : 2.0) * computeTransientSculpt(band) * (spectralProfile.spectralEntropy > 0.7 ? 1.1 : 1.0);
-            this.lowShelfGain.gain.cancelScheduledValues(currentTime);
-            this.lowShelfGain.gain.setValueAtTime(this.lowShelfGain.gain.value, currentTime);
-            this.lowShelfGain.gain.linearRampToValueAtTime(bassBoost * phaseCoherenceFactor, currentTime + rampTime);
-            this.subBassFilter.gain.cancelScheduledValues(currentTime);
-            this.subBassFilter.gain.setValueAtTime(this.subBassFilter.gain.value, currentTime);
-            this.subBassFilter.gain.linearRampToValueAtTime(finalBoost * 1.6 * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'subMid') {
-            if (!this.subMidFilter?.gain) throw new Error('subMidFilter is not initialized');
-            const subMidBoost = finalBoost * (spectralProfile.spectralComplexity > 0.7 || spectralProfile.spectralEntropy > 0.7 ? 1.7 : 1.5) * computeTransientSculpt(band);
-            this.subMidFilter.gain.cancelScheduledValues(currentTime);
-            this.subMidFilter.gain.setValueAtTime(this.subMidFilter.gain.value, currentTime);
-            this.subMidFilter.gain.linearRampToValueAtTime(subMidBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'mid') {
-            if (!this.midShelfGain?.gain) throw new Error('midShelfGain is not initialized');
-            const midBoost = finalBoost * 1.6 * computeTransientSculpt(band);
-            this.midShelfGain.gain.cancelScheduledValues(currentTime);
-            this.midShelfGain.gain.setValueAtTime(this.midShelfGain.gain.value, currentTime);
-            this.midShelfGain.gain.linearRampToValueAtTime(midBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'highMid') {
-            if (!this.highMidFilter?.gain) throw new Error('highMidFilter is not initialized');
-            const highMidBoost = finalBoost * (profile === 'bright' || spectralProfile.spectralEntropy > 0.7 ? 1.7 : 1.5) * computeTransientSculpt(band);
-            this.highMidFilter.gain.cancelScheduledValues(currentTime);
-            this.highMidFilter.gain.setValueAtTime(this.highMidFilter.gain.value, currentTime);
-            this.highMidFilter.gain.linearRampToValueAtTime(highMidBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'treble') {
-            if (!this.highShelfGain?.gain || !this.subTrebleFilter?.gain) throw new Error('highShelfGain or subTrebleFilter is not initialized');
-            const trebleBoost = finalBoost * (profile === 'bright' || spectralProfile.spectralEntropy > 0.7 ? 2.0 : 1.8) * computeTransientSculpt(band);
-            this.highShelfGain.gain.cancelScheduledValues(currentTime);
-            this.highShelfGain.gain.setValueAtTime(this.highShelfGain.gain.value, currentTime);
-            this.highShelfGain.gain.linearRampToValueAtTime(trebleBoost * phaseCoherenceFactor, currentTime + rampTime);
-            this.subTrebleFilter.gain.cancelScheduledValues(currentTime);
-            this.subTrebleFilter.gain.setValueAtTime(this.subTrebleFilter.gain.value, currentTime);
-            this.subTrebleFilter.gain.linearRampToValueAtTime(finalBoost * 1.6 * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'air') {
-            if (!this.airFilter?.gain) throw new Error('airFilter is not initialized');
-            const airBoost = finalBoost * (profile === 'smartStudio' || spectralProfile.spectralEntropy > 0.7 ? 1.4 : 1.2) * computeTransientSculpt(band);
-            this.airFilter.gain.cancelScheduledValues(currentTime);
-            this.airFilter.gain.setValueAtTime(this.airFilter.gain.value, currentTime);
-            this.airFilter.gain.linearRampToValueAtTime(airBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else if (band === 'vocal') {
-            if (!this.formantFilter1?.gain || !this.formantFilter2?.gain || !this.formantFilter3?.gain) {
-                throw new Error('formantFilter1, formantFilter2, or formantFilter3 is not initialized');
-            }
-            const vocalBoost = finalBoost * (isVocalFeedback || profile === 'vocal' ? 1.5 : 1.3) * computeTransientSculpt(band);
-            this.formantFilter1.gain.cancelScheduledValues(currentTime);
-            this.formantFilter1.gain.setValueAtTime(this.formantFilter1.gain.value, currentTime);
-            this.formantFilter1.gain.linearRampToValueAtTime(vocalBoost * phaseCoherenceFactor, currentTime + rampTime);
-            this.formantFilter2.gain.cancelScheduledValues(currentTime);
-            this.formantFilter2.gain.setValueAtTime(this.formantFilter2.gain.value, currentTime);
-            this.formantFilter2.gain.linearRampToValueAtTime(vocalBoost * phaseCoherenceFactor, currentTime + rampTime);
-            this.formantFilter3.gain.cancelScheduledValues(currentTime);
-            this.formantFilter3.gain.setValueAtTime(this.formantFilter3.gain.value, currentTime);
-            this.formantFilter3.gain.linearRampToValueAtTime(vocalBoost * phaseCoherenceFactor, currentTime + rampTime);
-        } else {
-            throw new Error(`Invalid band: ${band}`);
-        }
-
-        // Lưu trạng thái boost vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`boostState_${this.contextId}_${band}`, {
-                profile,
-                listenerProfile,
-                songStructure,
-                cpuLoad,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                transientEnergy: spectralProfile.transientEnergy
-            }) || `boostState_${this.contextId}_${profile}_${band}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    boost: finalBoost,
-                    band,
-                    rampTime,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    spectralProfile,
-                    isVocalFeedback,
-                    deviceAdaptFactor,
-                    phaseCoherenceFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor),
-                priority: 'high'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug(`Boost set to ${finalBoost.toFixed(3)} for band: ${band}`, {
-                rampTime,
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile,
-                songStructure,
-                spectralComplexity: spectralProfile.spectralComplexity,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                harmonicRatio: spectralProfile.harmonicRatio,
-                transientEnergy: spectralProfile.transientEnergy,
-                isVocalFeedback,
-                deviceAdaptFactor,
-                phaseCoherenceFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error setting boost:', error, {
-            boost,
-            band,
-            profile,
-            listenerProfile,
-            cpuLoad,
-            isLowPowerDevice,
-            contextState: this.context?.state,
-            isVocalFeedback,
-            deviceAdaptFactor
-        }, 'high', {
-            memoryManager: this.memoryManager
-        });
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug(`Boost set to ${boost.toFixed(3)} for band: ${band}`, {
+				rampTime,
+				cpuLoad,
+				isLowPowerDevice,
+				profile,
+				songStructure,
+				spectralComplexity: spectralProfile.spectralComplexity,
+				isVocalFeedback,
+				cacheStats: this.memoryManager?.getCacheStats?.()
+			});
+		}
+	} catch (error) {
+		handleError('Error setting boost:', error, {
+			boost,
+			band,
+			profile: this.profile,
+			cpuLoad: this.getCPULoad?.() || 0.5,
+			isLowPowerDevice: navigator.hardwareConcurrency < 4,
+			contextState: this.context?.state,
+			isVocalFeedback
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+	}
 };
 
 Jungle.prototype.setPan = function(pan) {
-    try {
-        // Kiểm tra giá trị pan
-        if (typeof pan !== 'number' || isNaN(pan)) {
-            throw new Error('Pan must be a valid number.');
-        }
-        pan = Math.max(-1, Math.min(1, pan));
+	try {
+		// Kiểm tra giá trị pan
+		if (typeof pan !== 'number' || isNaN(pan)) {
+			throw new Error('Pan must be a valid number.');
+		}
+		pan = Math.max(-1, Math.min(1, pan));
 
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-        };
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
+		// Lấy thông tin thiết bị và cấu hình
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const profile = this.profile || 'smartStudio';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const spectralProfile = this.spectralProfile || {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			instruments: {},
+			chroma: null,
+			spectralComplexity: 0.5,
+			harmonicRatio: 0.5
+		};
 
-        // Kiểm tra panner node và AudioContext
-        if (!this.panner || !(this.context instanceof AudioContext)) {
-            throw new Error('Panner node or AudioContext is not initialized.');
-        }
+		// Kiểm tra panner node và AudioContext
+		if (!this.panner || !(this.context instanceof AudioContext)) {
+			throw new Error('Panner node or AudioContext is not initialized.');
+		}
 
-        // Dynamic Pan Adjustment: Điều chỉnh rampTime
-        let rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME); // 0.075
-        if (profile === 'bright' || profile === 'smartStudio') {
-            rampTime *= 1.2;
-        } else if (isLowPowerDevice && cpuLoad > 0.9) {
-            rampTime *= 0.8 * deviceAdaptFactor; // Tối ưu cho thiết bị yếu
-        }
-        if (songStructure.section === 'chorus') {
-            pan *= 1.1 * (listenerProfile === 'audiophile' ? 1.2 : listenerProfile === 'casual' ? 0.9 : 1.0); // Điều chỉnh theo listenerProfile
-            pan = Math.max(-1, Math.min(1, pan));
-        }
+		// Dynamic Pan Adjustment: Điều chỉnh rampTime
+		let rampTime = ensureFinite(this.rampTime, DEFAULT_RAMP_TIME); // 0.075
+		if (profile === 'bright' || profile === 'smartStudio') {
+			rampTime *= 1.2; // Tăng độ mượt cho Bright, Smart.S
+		} else if (isLowPowerDevice && cpuLoad > 0.9) {
+			rampTime *= 0.8; // Giảm độ trễ cho thiết bị yếu
+		}
+		if (songStructure.section === 'chorus') {
+			pan *= 1.1; // Tăng độ rộng stereo cho chorus
+			pan = Math.max(-1, Math.min(1, pan)); // Giới hạn lại
+		}
 
-        // Stable Pan Transition: Áp dụng pan
-        this.panner.pan.linearRampToValueAtTime(pan, this.context.currentTime + rampTime);
+		// Stable Pan Transition: Áp dụng pan
+		this.panner.pan.linearRampToValueAtTime(pan, this.context.currentTime + rampTime);
 
-        // Lưu trạng thái pan vào memoryManager
-        if (this.memoryManager) {
-            const cacheKey = this.generateCacheSignature?.(`panState_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                songStructure,
-                cpuLoad,
-                spectralEntropy: spectralProfile.spectralEntropy
-            }) || `panState_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    pan,
-                    rampTime,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    spectralProfile,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'high'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
+		// Lưu trạng thái pan vào memoryManager
+		if (this.memoryManager) {
+			const cacheKey = `panState_${this.contextId}_${profile}`;
+			this.memoryManager.set(cacheKey, {
+				data: {
+					pan,
+					rampTime,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					spectralProfile
+				},
+				expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+				priority: 'high'
+			});
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+		}
 
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug('Pan set successfully', {
-                pan,
-                rampTime,
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile,
-                songStructure,
-                spectralComplexity: spectralProfile.spectralComplexity,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                harmonicRatio: spectralProfile.harmonicRatio,
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error setting pan:', error, {
-            pan,
-            profile,
-            listenerProfile,
-            cpuLoad,
-            isLowPowerDevice,
-            contextState: this.context?.state,
-            deviceAdaptFactor
-        }, 'high', {
-            memoryManager: this.memoryManager
-        });
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug('Pan set successfully', {
+				pan,
+				rampTime,
+				cpuLoad,
+				isLowPowerDevice,
+				profile,
+				songStructure,
+				spectralComplexity: spectralProfile.spectralComplexity,
+				cacheStats: this.memoryManager?.getCacheStats?.()
+			});
+		}
+	} catch (error) {
+		handleError('Error setting pan:', error, {
+			pan,
+			profile: this.profile,
+			cpuLoad: this.getCPULoad?.() || 0.5,
+			isLowPowerDevice: navigator.hardwareConcurrency < 4,
+			contextState: this.context?.state
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+	}
 };
 
 Jungle.prototype.ensureAudioContext = function() {
-    return new Promise((resolve, reject) => {
-        try {
-            // Lấy thông tin thiết bị và cấu hình
-            const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-            const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-            const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-            const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-            const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-            const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-            const spectralProfile = this.spectralProfile || {
-                subBass: 0.5,
-                bass: 0.5,
-                subMid: 0.5,
-                midLow: 0.5,
-                midHigh: 0.5,
-                high: 0.5,
-                subTreble: 0.5,
-                air: 0.5,
-                vocalPresence: 0.5,
-                transientEnergy: 0.5,
-                instruments: {},
-                chroma: null,
-                spectralComplexity: 0.5,
-                harmonicRatio: 0.5,
-                spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-            };
+	return new Promise((resolve, reject) => {
+		try {
+			// Lấy thông tin thiết bị và cấu hình
+			const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+			const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+			const profile = this.profile || 'smartStudio';
+			const songStructure = this.memoryManager?.get('lastStructure') || {
+				section: 'unknown'
+			};
+			const spectralProfile = this.spectralProfile || {
+				subBass: 0.5,
+				bass: 0.5,
+				subMid: 0.5,
+				midLow: 0.5,
+				midHigh: 0.5,
+				high: 0.5,
+				subTreble: 0.5,
+				air: 0.5,
+				vocalPresence: 0.5,
+				transientEnergy: 0.5,
+				instruments: {},
+				chroma: null,
+				spectralComplexity: 0.5,
+				harmonicRatio: 0.5
+			};
 
-            // Kiểm tra hỗ trợ Web Audio API
-            if (!window.AudioContext && !window.webkitAudioContext) {
-                const error = new Error('Web Audio API is not supported in this environment.');
-                handleError('Error ensuring AudioContext:', error, {
-                    profile,
-                    listenerProfile,
-                    cpuLoad,
-                    isLowPowerDevice
-                }, 'high', { memoryManager: this.memoryManager });
-                reject(error);
-                return;
-            }
+			// Kiểm tra hỗ trợ Web Audio API
+			if (!window.AudioContext && !window.webkitAudioContext) {
+				const error = new Error('Web Audio API is not supported in this environment.');
+				handleError('Error ensuring AudioContext:', error, {
+					profile,
+					cpuLoad,
+					isLowPowerDevice
+				}, 'high', {
+					memoryManager: this.memoryManager
+				});
+				reject(error);
+				return;
+			}
 
-            // Kiểm tra và khởi tạo lại AudioContext nếu cần
-            if (!(this.context instanceof AudioContext) || this.context.state === 'closed') {
-                if (this.ownsContext) {
-                    if (this.context) {
-                        this.context.close().catch(e => console.warn('Error closing old AudioContext:', e));
-                    }
-                    this.context = new AudioContext();
-                    this.ownsContext = true;
+			// Kiểm tra và khởi tạo lại AudioContext nếu cần
+			if (!(this.context instanceof AudioContext) || this.context.state === 'closed') {
+				if (this.ownsContext) {
+					if (this.context) {
+						this.context.close().catch(e => console.warn('Error closing old AudioContext:', e));
+					}
+					this.context = new AudioContext();
+					this.ownsContext = true;
 
-                    // Tối ưu hóa AudioContext cho thiết bị yếu
-                    if (isLowPowerDevice || cpuLoad > 0.7) {
-                        this.context.baseLatency = Math.min(this.context.baseLatency * (1.5 * deviceAdaptFactor), 0.1); // Tối ưu baseLatency
-                    }
+					// Tối ưu hóa AudioContext cho thiết bị yếu
+					if (isLowPowerDevice && cpuLoad > 0.9) {
+						this.context.baseLatency = Math.min(this.context.baseLatency * 1.5, 0.1); // Giới hạn độ trễ
+					}
 
-                    // Bảo toàn userFeedback trước khi tạo buffer
-                    let preservedFeedback = [];
-                    if (this.memoryManager && this.memoryManager.buffers.get('userFeedback')) {
-                        preservedFeedback = this.memoryManager.buffers.get('userFeedback').slice();
-                    }
+					// Tái tạo buffer
+					const bufferOptions = {
+						smoothness: profile === 'vocal' || profile === 'bright' ? 1.5 : 1.3, // Tăng từ 1.3
+						vibrance: profile === 'smartStudio' ? 0.6 : 0.5, // Tăng từ 0.5
+						pitchShift: this.currentPitchMult || 0,
+						isVocal: this.isVocal || profile === 'vocal',
+						spectralProfile,
+						currentGenre: this.currentGenre || 'Unknown',
+						noiseLevel: this.noiseLevel || {
+							level: 0,
+							midFreq: 0.5,
+							white: 0.5
+						},
+						wienerGain: this.wienerGain || 1,
+						polyphonicPitches: this.polyphonicPitches || [],
+						qualityMode: this.qualityMode || 'high',
+						profile,
+						songStructure
+					};
 
-                    // Tái tạo buffer
-                    const bufferOptions = {
-                        smoothness: profile === 'vocal' || profile === 'bright' ? 1.5 : 1.3,
-                        vibrance: profile === 'smartStudio' ? 0.6 : 0.5,
-                        pitchShift: this.currentPitchMult || 0,
-                        isVocal: this.isVocal || profile === 'vocal',
-                        spectralProfile,
-                        currentGenre: this.currentGenre || 'Unknown',
-                        noiseLevel: this.noiseLevel || {
-                            level: 0,
-                            midFreq: 0.5,
-                            white: 0.5
-                        },
-                        wienerGain: this.wienerGain || 1,
-                        polyphonicPitches: this.polyphonicPitches || [],
-                        qualityMode: this.qualityMode || 'high',
-                        profile,
-                        listenerProfile,
-                        songStructure
-                    };
+					const buffers = getShiftBuffers(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
+					this.shiftDownBuffer = buffers.shiftDownBuffer;
+					this.shiftUpBuffer = buffers.shiftUpBuffer;
+					this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
 
-                    const buffers = getShiftBuffers(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
-                    this.shiftDownBuffer = buffers.shiftDownBuffer;
-                    this.shiftUpBuffer = buffers.shiftUpBuffer;
-                    this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
+					// Kiểm tra buffer
+					if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
+						throw new Error('Failed to create valid buffers');
+					}
+					if (this.fadeBuffer.length < this.bufferTime * this.context.sampleRate) {
+						throw new Error('fadeBuffer length insufficient', {
+							expected: this.bufferTime * this.context.sampleRate,
+							actual: this.fadeBuffer.length
+						});
+					}
 
-                    // Kiểm tra buffer
-                    if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
-                        throw new Error('Failed to create valid buffers');
-                    }
-                    if (this.fadeBuffer.length < this.bufferTime * this.context.sampleRate) {
-                        throw new Error('fadeBuffer length insufficient', {
-                            expected: this.bufferTime * this.context.sampleRate,
-                            actual: this.fadeBuffer.length
-                        });
-                    }
+					// Tái khởi tạo node
+					this.initializeNodes();
 
-                    // Tái khởi tạo node
-                    this.initializeNodes();
+					// Lưu trạng thái buffer vào memoryManager
+					if (this.memoryManager) {
+						const cacheKey = `bufferState_${this.contextId}_${profile}`;
+						this.memoryManager.set(cacheKey, {
+							data: {
+								shiftDownLength: this.shiftDownBuffer.length,
+								shiftUpLength: this.shiftUpBuffer.length,
+								fadeBufferLength: this.fadeBuffer.length,
+								bufferTime: this.bufferTime,
+								fadeTime: this.fadeTime,
+								timestamp: Date.now(),
+								profile,
+								songStructure
+							},
+							expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+							priority: 'high'
+						});
+						this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+					}
 
-                    // Khôi phục userFeedback
-                    if (this.memoryManager && preservedFeedback.length > 0) {
-                        this.memoryManager.buffers.set('userFeedback', preservedFeedback, { priority: 'high' });
-                    }
+					console.debug('AudioContext reinitialized with new buffers and nodes', {
+						sampleRate: this.context.sampleRate,
+						bufferTime: this.bufferTime,
+						fadeTime: this.fadeTime,
+						profile,
+						songStructure,
+						cpuLoad,
+						isLowPowerDevice
+					});
 
-                    // Lưu trạng thái buffer vào memoryManager
-                    if (this.memoryManager) {
-                        const cacheKey = this.generateCacheSignature?.(`bufferState_${this.contextId}`, {
-                            profile,
-                            listenerProfile,
-                            songStructure,
-                            bufferTime: this.bufferTime,
-                            fadeTime: this.fadeTime
-                        }) || `bufferState_${this.contextId}_${profile}`;
-                        this.memoryManager.set(cacheKey, {
-                            data: {
-                                shiftDownLength: this.shiftDownBuffer.length,
-                                shiftUpLength: this.shiftUpBuffer.length,
-                                fadeBufferLength: this.fadeBuffer.length,
-                                bufferTime: this.bufferTime,
-                                fadeTime: this.fadeTime,
-                                timestamp: Date.now(),
-                                profile,
-                                listenerProfile,
-                                deviceAdaptFactor
-                            },
-                            expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                            priority: 'high'
-                        });
-                        this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-                    }
+					resolve(true);
+				} else {
+					const error = new Error('Invalid or closed AudioContext and no ownership to reinitialize.');
+					handleError('Error ensuring AudioContext:', error, {
+						profile,
+						cpuLoad,
+						isLowPowerDevice
+					}, 'high', {
+						memoryManager: this.memoryManager
+					});
+					reject(error);
+				}
+				return;
+			}
 
-                    console.debug('AudioContext reinitialized with new buffers and nodes', {
-                        sampleRate: this.context.sampleRate,
-                        bufferTime: this.bufferTime,
-                        fadeTime: this.fadeTime,
-                        profile,
-                        listenerProfile,
-                        songStructure,
-                        cpuLoad,
-                        isLowPowerDevice,
-                        deviceAdaptFactor
-                    });
+			// Xử lý trạng thái AudioContext
+			switch (this.context.state) {
+				case 'suspended':
+					const resumeOnUserGesture = () => {
+						this.context.resume()
+							.then(() => {
+								console.debug('AudioContext resumed', {
+									profile,
+									songStructure
+								});
+								resolve(true);
+							})
+							.catch(error => {
+								handleError('Error resuming AudioContext:', error, {
+									profile,
+									cpuLoad,
+									isLowPowerDevice
+								}, 'high', {
+									memoryManager: this.memoryManager
+								});
+								this.notifyUIError?.('Vui lòng nhấp vào nút phát hoặc tương tác với trang để kích hoạt âm thanh.');
+								reject(error);
+							});
+					};
 
-                    resolve(true);
-                } else {
-                    const error = new Error('Invalid or closed AudioContext and no ownership to reinitialize.');
-                    handleError('Error ensuring AudioContext:', error, {
-                        profile,
-                        listenerProfile,
-                        cpuLoad,
-                        isLowPowerDevice
-                    }, 'high', { memoryManager: this.memoryManager });
-                    reject(error);
-                }
-                return;
-            }
+					// Kiểm tra xem đã có hành động người dùng chưa
+					if (document.userActivation && document.userActivation.hasBeenActive) {
+						resumeOnUserGesture();
+					} else {
+						const userGestureHandler = () => {
+							resumeOnUserGesture();
+							document.removeEventListener('click', userGestureHandler);
+							document.removeEventListener('touchstart', userGestureHandler);
+						};
+						document.addEventListener('click', userGestureHandler);
+						document.addEventListener('touchstart', userGestureHandler);
+					}
+					break;
+				case 'running':
+					// Kiểm tra và cập nhật FFT size nếu cần
+					if (this._analyser && this._analyser.fftSize !== DEFAULT_FFT_SIZE) {
+						this._analyser.fftSize = DEFAULT_FFT_SIZE; // 4096
+						console.debug('Updated FFT size for analyser', {
+							fftSize: DEFAULT_FFT_SIZE,
+							profile
+						});
+					}
+					resolve(true);
+					break;
+				default:
+					console.warn('Unexpected AudioContext state:', this.context.state, {
+						profile,
+						cpuLoad,
+						isLowPowerDevice
+					});
+					resolve(true); // Giả định trạng thái vẫn có thể sử dụng
+					break;
+			}
 
-            // Xử lý trạng thái AudioContext
-            switch (this.context.state) {
-                case 'suspended':
-                    const resumeOnUserGesture = () => {
-                        this.context.resume()
-                            .then(() => {
-                                console.debug('AudioContext resumed', { profile, listenerProfile, songStructure });
-                                resolve(true);
-                            })
-                            .catch(error => {
-                                handleError('Error resuming AudioContext:', error, {
-                                    profile,
-                                    listenerProfile,
-                                    cpuLoad,
-                                    isLowPowerDevice
-                                }, 'high', { memoryManager: this.memoryManager });
-                                this.notifyUIError?.('Vui lòng nhấp vào nút phát hoặc tương tác với trang để kích hoạt âm thanh.');
-                                reject(error);
-                            });
-                    };
-
-                    // Kiểm tra xem đã có hành động người dùng chưa
-                    if (document.userActivation && document.userActivation.hasBeenActive) {
-                        resumeOnUserGesture();
-                    } else {
-                        const userGestureHandler = () => {
-                            resumeOnUserGesture();
-                            document.removeEventListener('click', userGestureHandler);
-                            document.removeEventListener('touchstart', userGestureHandler);
-                        };
-                        document.addEventListener('click', userGestureHandler);
-                        document.addEventListener('touchstart', userGestureHandler);
-                    }
-                    break;
-                case 'running':
-                    // Kiểm tra và cập nhật FFT size nếu cần
-                    if (this._analyser && this._analyser.fftSize !== DEFAULT_FFT_SIZE) {
-                        this._analyser.fftSize = DEFAULT_FFT_SIZE; // 4096
-                        console.debug('Updated FFT size for analyser', { fftSize: DEFAULT_FFT_SIZE, profile, listenerProfile });
-                    }
-                    resolve(true);
-                    break;
-                default:
-                    console.warn('Unexpected AudioContext state:', this.context.state, {
-                        profile,
-                        listenerProfile,
-                        cpuLoad,
-                        isLowPowerDevice
-                    });
-                    resolve(true); // Giả định trạng thái vẫn có thể sử dụng
-                    break;
-            }
-
-            // Debug logging
-            const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-            if (isDebug) {
-                console.debug('AudioContext ensured', {
-                    state: this.context.state,
-                    sampleRate: this.context.sampleRate,
-                    bufferTime: this.bufferTime,
-                    fadeTime: this.fadeTime,
-                    cpuLoad,
-                    isLowPowerDevice,
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    deviceAdaptFactor,
-                    spectralEntropy: spectralProfile.spectralEntropy,
-                    cacheStats: this.memoryManager?.getCacheStats?.()
-                });
-            }
-        } catch (error) {
-            handleError('Error ensuring AudioContext:', error, {
-                ownsContext: this.ownsContext,
-                contextState: this.context?.state,
-                profile,
-                listenerProfile,
-                cpuLoad,
-                isLowPowerDevice
-            }, 'high', { memoryManager: this.memoryManager });
-            reject(error);
-        }
-    });
+			// Debug logging
+			const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+			if (isDebug) {
+				console.debug('AudioContext ensured', {
+					state: this.context.state,
+					sampleRate: this.context.sampleRate,
+					bufferTime: this.bufferTime,
+					fadeTime: this.fadeTime,
+					cpuLoad,
+					isLowPowerDevice,
+					profile,
+					songStructure,
+					cacheStats: this.memoryManager?.getCacheStats?.()
+				});
+			}
+		} catch (error) {
+			handleError('Error ensuring AudioContext:', error, {
+				ownsContext: this.ownsContext,
+				contextState: this.context?.state,
+				profile,
+				cpuLoad,
+				isLowPowerDevice
+			}, 'high', {
+				memoryManager: this.memoryManager
+			});
+			reject(error);
+		}
+	});
 };
 
 Jungle.prototype.disconnect = function() {
-    try {
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
+	try {
+		// Lấy thông tin thiết bị và cấu hình
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const profile = this.profile || 'smartStudio';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
 
-        // Stop audio sources nếu đang chạy
-        if (this.isStarted) {
-            const nodes = [this.mod1, this.mod2, this.mod3, this.mod4, this.fade1, this.fade2];
-            for (const node of nodes) {
-                if (node && typeof node.stop === 'function') {
-                    node.stop();
-                }
-            }
-            this.isStarted = false;
-        }
+		// Stop audio sources nếu đang chạy
+		if (this.isStarted) {
+			const nodes = [this.mod1, this.mod2, this.mod3, this.mod4, this.fade1, this.fade2];
+			for (const node of nodes) {
+				if (node && typeof node.stop === 'function') {
+					node.stop();
+				}
+			}
+			this.isStarted = false;
+		}
 
-        // Clear analysis interval
-        if (this.audioAnalysisInterval) {
-            clearInterval(this.audioAnalysisInterval);
-            this.audioAnalysisInterval = null;
-        }
+		// Clear analysis interval
+		if (this.audioAnalysisInterval) {
+			clearInterval(this.audioAnalysisInterval);
+			this.audioAnalysisInterval = null;
+		}
 
-        // Terminate worker và xử lý pending messages
-        if (this.worker) {
-            try {
-                this.worker.postMessage({
-                    command: 'cleanup',
-                    profile,
-                    listenerProfile
-                });
-                this.worker.terminate();
-            } catch (workerError) {
-                console.warn('Worker termination issue:', workerError, { profile, listenerProfile });
-            }
-            this.worker = null;
-        }
+		// Terminate worker và xử lý pending messages
+		if (this.worker) {
+			try {
+				this.worker.postMessage({
+					command: 'cleanup',
+					profile
+				});
+				this.worker.terminate();
+			} catch (workerError) {
+				console.warn('Worker termination issue:', workerError, {
+					profile
+				});
+			}
+			this.worker = null;
+		}
 
-        // Disconnect analyser nếu tồn tại
-        if (this._analyser) {
-            if (this.outputGain) {
-                this.outputGain.disconnect(this._analyser);
-            }
-            this._analyser = null;
-        }
+		// Disconnect analyser nếu tồn tại
+		if (this._analyser) {
+			if (this.outputGain) {
+				this.outputGain.disconnect(this._analyser);
+			}
+			this._analyser = null;
+		}
 
-        // Disconnect tất cả audio nodes nếu tồn tại
-        const audioNodes = [
-            this.input, this.bassHighPassFilter, this.highPassFilter, this.lowShelfGain,
-            this.subBassFilter, this.subMidFilter, this.midBassFilter, this.midShelfGain,
-            this.highMidFilter, this.formantFilter1, this.formantFilter2, this.formantFilter3,
-            this.delay1, this.delay2, this.mix1, this.mix2, this.boostGain, this.panner,
-            this.highShelfGain, this.subTrebleFilter, this.airFilter, this.trebleLowPass,
-            this.lowPassFilter, this.notchFilter, this.outputGain, this.compressor, this.output
-        ];
-        for (const node of audioNodes) {
-            if (node && typeof node.disconnect === 'function') {
-                node.disconnect();
-            }
-        }
+		// Disconnect tất cả audio nodes nếu tồn tại
+		const audioNodes = [
+			this.input, this.bassHighPassFilter, this.highPassFilter, this.lowShelfGain,
+			this.subBassFilter, this.subMidFilter, this.midBassFilter, this.midShelfGain,
+			this.highMidFilter, this.formantFilter1, this.formantFilter2, this.formantFilter3,
+			this.delay1, this.delay2, this.mix1, this.mix2, this.boostGain, this.panner,
+			this.highShelfGain, this.subTrebleFilter, this.airFilter, this.trebleLowPass,
+			this.lowPassFilter, this.notchFilter, this.outputGain, this.compressor, this.output
+		];
+		for (const node of audioNodes) {
+			if (node && typeof node.disconnect === 'function') {
+				node.disconnect();
+			}
+		}
 
-        // Disconnect modulation và fade connections
-        const modConnections = [
-            { gain: this.mod1Gain, target: this.modGain1 },
-            { gain: this.mod2Gain, target: this.modGain2 },
-            { gain: this.mod3Gain, target: this.modGain1 },
-            { gain: this.mod4Gain, target: this.modGain2 }
-        ];
-        for (const { gain, target } of modConnections) {
-            if (gain && target && typeof gain.disconnect === 'function') {
-                gain.disconnect(target);
-            }
-        }
-        if (this.modGain1 && this.delay1) {
-            this.modGain1.disconnect(this.delay1.delayTime);
-        }
-        if (this.modGain2 && this.delay2) {
-            this.modGain2.disconnect(this.delay2.delayTime);
-        }
-        if (this.fade1 && this.mix1) {
-            this.fade1.disconnect(this.mix1.gain);
-        }
-        if (this.fade2 && this.mix2) {
-            this.fade2.disconnect(this.mix2.gain);
-        }
+		// Disconnect modulation và fade connections
+		const modConnections = [{
+				gain: this.mod1Gain,
+				target: this.modGain1
+			},
+			{
+				gain: this.mod2Gain,
+				target: this.modGain2
+			},
+			{
+				gain: this.mod3Gain,
+				target: this.modGain1
+			},
+			{
+				gain: this.mod4Gain,
+				target: this.modGain2
+			}
+		];
+		for (const {
+				gain,
+				target
+			}
+			of modConnections) {
+			if (gain && target && typeof gain.disconnect === 'function') {
+				gain.disconnect(target);
+			}
+		}
+		if (this.modGain1 && this.delay1) {
+			this.modGain1.disconnect(this.delay1.delayTime);
+		}
+		if (this.modGain2 && this.delay2) {
+			this.modGain2.disconnect(this.delay2.delayTime);
+		}
+		if (this.fade1 && this.mix1) {
+			this.fade1.disconnect(this.mix1.gain);
+		}
+		if (this.fade2 && this.mix2) {
+			this.fade2.disconnect(this.mix2.gain);
+		}
 
-        // Nullify node references
-        const nodeRefs = [
-            'mod1', 'mod2', 'mod3', 'mod4', 'fade1', 'fade2', 'mod1Gain', 'mod2Gain', 'mod3Gain',
-            'mod4Gain', 'modGain1', 'modGain2', 'mix1', 'mix2', 'delay1', 'delay2', 'input', 'output',
-            'boostGain', 'panner', 'bassHighPassFilter', 'highPassFilter', 'lowShelfGain', 'subBassFilter',
-            'subMidFilter', 'midBassFilter', 'midShelfGain', 'highMidFilter', 'formantFilter1',
-            'formantFilter2', 'formantFilter3', 'highShelfGain', 'subTrebleFilter', 'airFilter',
-            'trebleLowPass', 'lowPassFilter', 'notchFilter', 'outputGain', 'compressor'
-        ];
-        for (const ref of nodeRefs) {
-            this[ref] = null;
-        }
+		// Nullify node references
+		const nodeRefs = [
+			'mod1', 'mod2', 'mod3', 'mod4', 'fade1', 'fade2', 'mod1Gain', 'mod2Gain', 'mod3Gain',
+			'mod4Gain', 'modGain1', 'modGain2', 'mix1', 'mix2', 'delay1', 'delay2', 'input', 'output',
+			'boostGain', 'panner', 'bassHighPassFilter', 'highPassFilter', 'lowShelfGain', 'subBassFilter',
+			'subMidFilter', 'midBassFilter', 'midShelfGain', 'highMidFilter', 'formantFilter1',
+			'formantFilter2', 'formantFilter3', 'highShelfGain', 'subTrebleFilter', 'airFilter',
+			'trebleLowPass', 'lowPassFilter', 'notchFilter', 'outputGain', 'compressor'
+		];
+		for (const ref of nodeRefs) {
+			this[ref] = null;
+		}
 
-        // Bảo toàn userFeedback trước khi xóa buffers
-        let preservedFeedback = [];
-        if (this.memoryManager && this.memoryManager.buffers.get('userFeedback')) {
-            preservedFeedback = this.memoryManager.buffers.get('userFeedback').slice();
-        }
+		// Clear buffers và quản lý memoryManager
+		if (this.memoryManager) {
+			this.memoryManager.buffers.clear();
+			const cacheKey = `disconnectState_${this.contextId}_${profile}`;
+			this.memoryManager.set(cacheKey, {
+				data: {
+					isStarted: false,
+					timestamp: Date.now(),
+					profile,
+					songStructure,
+					cpuLoad
+				},
+				expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+				priority: 'high'
+			});
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+		}
+		this.shiftDownBuffer = null;
+		this.shiftUpBuffer = null;
+		this.fadeBuffer = null;
 
-        // Clear buffers và quản lý memoryManager
-        if (this.memoryManager) {
-            this.memoryManager.buffers.clear();
-            // Khôi phục userFeedback
-            if (preservedFeedback.length > 0) {
-                this.memoryManager.buffers.set('userFeedback', preservedFeedback, { priority: 'high' });
-            }
-            const cacheKey = this.generateCacheSignature?.(`disconnectState_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                songStructure,
-                cpuLoad
-            }) || `disconnectState_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    isStarted: false,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    songStructure,
-                    cpuLoad,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'high'
-            });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-        this.shiftDownBuffer = null;
-        this.shiftUpBuffer = null;
-        this.fadeBuffer = null;
+		// Khôi phục tham số mặc định
+		this.delayTime = DEFAULT_DELAY_TIME; // 0.080
+		this.fadeTime = DEFAULT_FADE_TIME; // 0.100
+		this.bufferTime = DEFAULT_BUFFER_TIME; // 0.200
+		this.rampTime = DEFAULT_RAMP_TIME; // 0.075
+		this.lowPassFreq = DEFAULT_LOW_PASS_FREQ; // 18000
+		this.highPassFreq = DEFAULT_HIGH_PASS_FREQ; // 40
+		this.notchFreq = DEFAULT_NOTCH_FREQ; // 3500
+		this.filterQ = DEFAULT_FILTER_Q; // 0.3
+		this.notchQ = DEFAULT_NOTCH_Q; // 2.5
+		this.formantF1Freq = DEFAULT_FORMANT_F1_FREQ; // 550
+		this.formantF2Freq = DEFAULT_FORMANT_F2_FREQ; // 2000
+		this.formantF3Freq = DEFAULT_FORMANT_F3_FREQ; // 3200
+		this.formantQ = DEFAULT_FORMANT_Q; // 1.8
+		this.subMidFreq = DEFAULT_SUBMID_FREQ; // 500
+		this.subTrebleFreq = DEFAULT_SUBTREBLE_FREQ; // 11000
+		this.midBassFreq = DEFAULT_MIDBASS_FREQ; // 200
+		this.highMidFreq = DEFAULT_HIGHMID_FREQ; // 2000
+		this.airFreq = DEFAULT_AIR_FREQ; // 13000
+		this.spectralProfile = {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			instruments: {},
+			chroma: null,
+			spectralComplexity: 0.5,
+			harmonicRatio: 0.5
+		};
+		this.tempoMemory = null;
+		this.currentGenre = 'Unknown';
+		this.currentKey = {
+			key: 'Unknown',
+			confidence: 0,
+			isMajor: true
+		};
+		this.currentProfile = profile; // Giữ profile hiện tại
+		this.nextProcessingInterval = 800; // Giảm từ 1000
+		this.currentPitchMult = 0;
+		this.noiseLevel = {
+			level: 0,
+			midFreq: 0.5,
+			white: 0.5
+		};
+		this.qualityPrediction = {
+			score: 0,
+			recommendations: []
+		};
+		this.isVocal = profile === 'vocal';
+		this.wienerGain = 1;
+		this.polyphonicPitches = [];
+		this.transientBoost = DEFAULT_TRANSIENT_BOOST; // 0.5
 
-        // Khôi phục tham số mặc định
-        this.delayTime = DEFAULT_DELAY_TIME; // 0.080
-        this.fadeTime = DEFAULT_FADE_TIME; // 0.100
-        this.bufferTime = DEFAULT_BUFFER_TIME; // 0.200
-        this.rampTime = DEFAULT_RAMP_TIME; // 0.075
-        this.lowPassFreq = DEFAULT_LOW_PASS_FREQ; // 18000
-        this.highPassFreq = DEFAULT_HIGH_PASS_FREQ; // 40
-        this.notchFreq = DEFAULT_NOTCH_FREQ; // 3500
-        this.filterQ = DEFAULT_FILTER_Q; // 0.3
-        this.notchQ = DEFAULT_NOTCH_Q; // 2.5
-        this.formantF1Freq = DEFAULT_FORMANT_F1_FREQ; // 550
-        this.formantF2Freq = DEFAULT_FORMANT_F2_FREQ; // 2000
-        this.formantF3Freq = DEFAULT_FORMANT_F3_FREQ; // 3200
-        this.formantQ = DEFAULT_FORMANT_Q; // 1.8
-        this.subMidFreq = DEFAULT_SUBMID_FREQ; // 500
-        this.subTrebleFreq = DEFAULT_SUBTREBLE_FREQ; // 11000
-        this.midBassFreq = DEFAULT_MIDBASS_FREQ; // 200
-        this.highMidFreq = DEFAULT_HIGHMID_FREQ; // 2000
-        this.airFreq = DEFAULT_AIR_FREQ; // 13000
-        this.spectralProfile = {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-        };
-        this.tempoMemory = null;
-        this.currentGenre = 'Unknown';
-        this.currentKey = {
-            key: 'Unknown',
-            confidence: 0,
-            isMajor: true
-        };
-        this.currentProfile = profile; // Giữ profile hiện tại
-        this.nextProcessingInterval = 800; // Giảm từ 1000
-        this.currentPitchMult = 0;
-        this.noiseLevel = {
-            level: 0,
-            midFreq: 0.5,
-            white: 0.5
-        };
-        this.qualityPrediction = {
-            score: 0,
-            recommendations: []
-        };
-        this.isVocal = profile === 'vocal';
-        this.wienerGain = 1;
-        this.polyphonicPitches = [];
-        this.transientBoost = DEFAULT_TRANSIENT_BOOST; // 0.5
+		// Đóng AudioContext nếu sở hữu
+		if (this.ownsContext && this.context) {
+			this.context.close().then(() => {
+				this.context = null;
+				console.debug('AudioContext closed successfully', {
+					profile
+				});
+			}).catch(error => {
+				handleError('Error closing AudioContext:', error, {
+					profile
+				}, 'high');
+			});
+		}
 
-        // Đóng AudioContext nếu sở hữu
-        if (this.ownsContext && this.context) {
-            this.context.close().then(() => {
-                this.context = null;
-                console.debug('AudioContext closed successfully', { profile, listenerProfile });
-            }).catch(error => {
-                handleError('Error closing AudioContext:', error, { profile, listenerProfile }, 'high');
-            });
-        }
-
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug('Jungle disconnected successfully', {
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile,
-                songStructure,
-                deviceAdaptFactor,
-                cacheStats: this.memoryManager?.getCacheStats?.(),
-                isStarted: this.isStarted,
-                hasWorker: !!this.worker,
-                hasAnalyser: !!this._analyser,
-                ownsContext: this.ownsContext
-            });
-        }
-    } catch (error) {
-        handleError('Error during Jungle disconnect:', error, {
-            isStarted: this.isStarted,
-            hasWorker: !!this.worker,
-            hasAnalyser: !!this._analyser,
-            ownsContext: this.ownsContext,
-            profile,
-            listenerProfile,
-            cpuLoad,
-            isLowPowerDevice
-        }, 'high', {
-            memoryManager: this.memoryManager
-        });
-        throw error;
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug('Jungle disconnected successfully', {
+				cpuLoad,
+				isLowPowerDevice,
+				profile,
+				songStructure,
+				cacheStats: this.memoryManager?.getCacheStats?.(),
+				isStarted: this.isStarted,
+				hasWorker: !!this.worker,
+				hasAnalyser: !!this._analyser,
+				ownsContext: this.ownsContext
+			});
+		}
+	} catch (error) {
+		handleError('Error during Jungle disconnect:', error, {
+			isStarted: this.isStarted,
+			hasWorker: !!this.worker,
+			hasAnalyser: !!this._analyser,
+			ownsContext: this.ownsContext,
+			profile,
+			cpuLoad,
+			isLowPowerDevice
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+		throw error;
+	}
 };
 
 Jungle.prototype.reset = function() {
-    try {
-        // Disconnect và dọn dẹp trạng thái hiện tại
-        this.disconnect();
-        this.isStarted = false;
+	try {
+		// Disconnect và dọn dẹp trạng thái hiện tại
+		this.disconnect();
+		this.isStarted = false;
 
-        // Lấy thông tin thiết bị và cấu hình
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
-        const profile = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'].includes(this.profile) ? this.profile : 'smartStudio'; // Kiểm tra profile hợp lệ
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const songStructure = this.memoryManager?.get('lastStructure') || { section: 'unknown' };
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
-        const spectralProfile = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            instruments: {},
-            chroma: null,
-            spectralComplexity: 0.5,
-            harmonicRatio: 0.5,
-            spectralEntropy: 0.5 // Thêm từ HiFi AT2030
-        };
+		// Lấy thông tin thiết bị và cấu hình
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency < 4 : false;
+		const profile = this.profile || 'smartStudio';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
 
-        // Khởi tạo lại AudioContext nếu sở hữu
-        if (this.ownsContext) {
-            if (this.context) {
-                this.context.close().catch(e => console.warn('Error closing AudioContext:', e));
-            }
-            this.context = new AudioContext();
-            if (this.context.state === 'suspended') {
-                const resumeOnUserGesture = () => {
-                    this.context.resume().then(() => {
-                        console.debug('AudioContext resumed after reset', { profile, listenerProfile });
-                    }).catch(e => {
-                        handleError('Failed to resume AudioContext after reset', e, {
-                            contextState: this.context.state,
-                            profile,
-                            listenerProfile
-                        }, 'high', { memoryManager: this.memoryManager });
-                    });
-                };
+		// Khởi tạo lại AudioContext nếu sở hữu
+		if (this.ownsContext) {
+			if (this.context) {
+				this.context.close().catch(e => console.warn('Error closing AudioContext:', e));
+			}
+			this.context = new AudioContext();
+			if (this.context.state === 'suspended') {
+				const resumeOnUserGesture = () => {
+					this.context.resume().then(() => {
+						console.debug('AudioContext resumed after reset');
+					}).catch(e => {
+						console.warn('Không thể khôi phục AudioContext sau reset', e);
+						handleError('Failed to resume AudioContext after reset', e, {
+							contextState: this.context.state
+						}, 'high', {
+							memoryManager: this.memoryManager
+						});
+					});
+				};
 
-                // Lắng nghe sự kiện người dùng
-                const userGestureHandler = () => {
-                    resumeOnUserGesture();
-                    document.removeEventListener('click', userGestureHandler);
-                    document.removeEventListener('touchstart', userGestureHandler);
-                };
-                document.addEventListener('click', userGestureHandler);
-                document.addEventListener('touchstart', userGestureHandler);
-            }
-        } else if (!(this.context instanceof AudioContext)) {
-            throw new Error('Invalid AudioContext after reset: context is not an instance of AudioContext.');
-        }
+				// Lắng nghe sự kiện người dùng
+				const userGestureHandler = () => {
+					resumeOnUserGesture();
+					document.removeEventListener('click', userGestureHandler);
+					document.removeEventListener('touchstart', userGestureHandler);
+				};
+				document.addEventListener('click', userGestureHandler);
+				document.addEventListener('touchstart', userGestureHandler);
+			}
+		} else if (!(this.context instanceof AudioContext)) {
+			throw new Error('Invalid AudioContext after reset: context is not an instance of AudioContext.');
+		}
 
-        // Khôi phục các tham số về giá trị mặc định
-        this.delayTime = DEFAULT_DELAY_TIME; // 0.080
-        this.fadeTime = DEFAULT_FADE_TIME; // 0.100
-        this.bufferTime = DEFAULT_BUFFER_TIME; // 0.200
-        this.rampTime = DEFAULT_RAMP_TIME; // 0.075
-        this.lowPassFreq = DEFAULT_LOW_PASS_FREQ; // 18000
-        this.highPassFreq = DEFAULT_HIGH_PASS_FREQ; // 40
-        this.notchFreq = DEFAULT_NOTCH_FREQ; // 3500
-        this.filterQ = DEFAULT_FILTER_Q; // 0.3
-        this.notchQ = DEFAULT_NOTCH_Q; // 2.5
-        this.formantF1Freq = DEFAULT_FORMANT_F1_FREQ; // 550
-        this.formantF2Freq = DEFAULT_FORMANT_F2_FREQ; // 2000
-        this.formantF3Freq = DEFAULT_FORMANT_F3_FREQ; // 3200
-        this.formantQ = DEFAULT_FORMANT_Q; // 1.8
-        this.subMidFreq = DEFAULT_SUBMID_FREQ; // 500
-        this.subTrebleFreq = DEFAULT_SUBTREBLE_FREQ; // 11000
-        this.midBassFreq = DEFAULT_MIDBASS_FREQ; // 200
-        this.highMidFreq = DEFAULT_HIGHMID_FREQ; // 2000
-        this.airFreq = DEFAULT_AIR_FREQ; // 13000
-        this.qualityMode = 'high';
-        this.currentPitchMult = 0;
-        this.isVocal = profile === 'vocal';
-        this.wienerGain = 1;
-        this.polyphonicPitches = [];
-        this.transientBoost = DEFAULT_TRANSIENT_BOOST; // 0.5
-        this.nextProcessingInterval = 800; // Giảm từ 1000 để tăng phản hồi
-        this.currentGenre = 'Unknown';
-        this.currentKey = {
-            key: 'Unknown',
-            confidence: 0,
-            isMajor: true
-        };
-        this.currentProfile = profile; // Giữ profile hiện tại
-        this.noiseLevel = {
-            level: 0,
-            midFreq: 0.5,
-            white: 0.5
-        };
-        this.qualityPrediction = {
-            score: 0,
-            recommendations: []
-        };
-        this.spectralProfile = spectralProfile;
+		// Khôi phục các tham số về giá trị mặc định
+		this.delayTime = DEFAULT_DELAY_TIME; // 0.080
+		this.fadeTime = DEFAULT_FADE_TIME; // 0.100
+		this.bufferTime = DEFAULT_BUFFER_TIME; // 0.200
+		this.rampTime = DEFAULT_RAMP_TIME; // 0.075
+		this.lowPassFreq = DEFAULT_LOW_PASS_FREQ; // 18000
+		this.highPassFreq = DEFAULT_HIGH_PASS_FREQ; // 40
+		this.notchFreq = DEFAULT_NOTCH_FREQ; // 3500
+		this.filterQ = DEFAULT_FILTER_Q; // 0.3
+		this.notchQ = DEFAULT_NOTCH_Q; // 2.5
+		this.formantF1Freq = DEFAULT_FORMANT_F1_FREQ; // 550
+		this.formantF2Freq = DEFAULT_FORMANT_F2_FREQ; // 2000
+		this.formantF3Freq = DEFAULT_FORMANT_F3_FREQ; // 3200
+		this.formantQ = DEFAULT_FORMANT_Q; // 1.8
+		this.subMidFreq = DEFAULT_SUBMID_FREQ; // 500
+		this.subTrebleFreq = DEFAULT_SUBTREBLE_FREQ; // 11000
+		this.midBassFreq = DEFAULT_MIDBASS_FREQ; // 200
+		this.highMidFreq = DEFAULT_HIGHMID_FREQ; // 2000
+		this.airFreq = DEFAULT_AIR_FREQ; // 13000
+		this.qualityMode = 'high';
+		this.currentPitchMult = 0;
+		this.isVocal = profile === 'vocal';
+		this.wienerGain = 1;
+		this.polyphonicPitches = [];
+		this.transientBoost = DEFAULT_TRANSIENT_BOOST; // 0.5
+		this.nextProcessingInterval = 800; // Giảm từ 1000 để tăng phản hồi
+		this.currentGenre = 'Unknown';
+		this.currentKey = {
+			key: 'Unknown',
+			confidence: 0,
+			isMajor: true
+		};
+		this.currentProfile = profile; // Giữ profile hiện tại
+		this.noiseLevel = {
+			level: 0,
+			midFreq: 0.5,
+			white: 0.5
+		};
+		this.qualityPrediction = {
+			score: 0,
+			recommendations: []
+		};
+		this.spectralProfile = {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			instruments: {},
+			chroma: null,
+			spectralComplexity: 0.5,
+			harmonicRatio: 0.5
+		};
+		this.tempoMemory = null;
 
-        // Smart Reset Algorithm: Khởi tạo lại memoryManager
-        let preservedFeedback = [];
-        if (this.memoryManager && this.memoryManager.buffers.get('userFeedback')) {
-            preservedFeedback = this.memoryManager.buffers.get('userFeedback').slice();
-        }
-        if (this.memoryManager) {
-            this.memoryManager.clear(); // Xóa cache cũ
-            // Khôi phục userFeedback
-            if (preservedFeedback.length > 0) {
-                this.memoryManager.buffers.set('userFeedback', preservedFeedback, { priority: 'high' });
-            }
-        } else {
-            this.memoryManager = new MemoryManager();
-        }
+		// Smart Reset Algorithm: Khởi tạo lại memoryManager
+		if (this.memoryManager) {
+			this.memoryManager.clear(); // Xóa cache cũ
+		} else {
+			this.memoryManager = new MemoryManager();
+		}
 
-        // Buffer Optimization Algorithm: Tính toán bufferTime
-        const pitchMultFactor = 1 + Math.abs(this.currentPitchMult) * 0.6;
-        let bufferTime = Math.max(this.bufferTime, this.fadeTime * 2.7 * pitchMultFactor);
-        if (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal') {
-            bufferTime *= 1.3;
-        } else if (isLowPowerDevice && cpuLoad > 0.9) {
-            bufferTime *= 0.9 * deviceAdaptFactor; // Tối ưu cho thiết bị yếu
-        }
-        if (spectralProfile.spectralEntropy > 0.7 || spectralProfile.harmonicRatio > 0.7) {
-            bufferTime *= 1.2; // Tăng bufferTime cho âm thanh phức tạp
-        }
-        if (bufferTime < this.fadeTime * 2.7) {
-            console.warn('bufferTime adjusted for smooth transitions', { bufferTime });
-            bufferTime = this.fadeTime * 2.7;
-        }
-        if (this.delayTime > MAX_DELAY_TIME) {
-            console.warn('delayTime exceeds MAX_DELAY_TIME, clamping', { delayTime: MAX_DELAY_TIME });
-            this.delayTime = MAX_DELAY_TIME; // 5
-        }
-        this.bufferTime = bufferTime;
+		// Buffer Optimization Algorithm: Tính toán bufferTime
+		const pitchMultFactor = 1 + Math.abs(this.currentPitchMult) * 0.6; // Tăng từ 0.5
+		let bufferTime = Math.max(this.bufferTime, this.fadeTime * 2.7 * pitchMultFactor); // Tăng từ 2.5
+		if (profile === 'bright' || profile === 'smartStudio' || profile === 'vocal') {
+			bufferTime *= 1.3; // Tăng từ 1.2 cho chất lượng cao
+		} else if (isLowPowerDevice && cpuLoad > 0.9) {
+			bufferTime *= 0.9; // Giảm nhẹ cho thiết bị yếu
+		}
+		if (bufferTime < this.fadeTime * 2.7) {
+			console.warn('bufferTime adjusted for smooth transitions', {
+				bufferTime
+			});
+			bufferTime = this.fadeTime * 2.7;
+		}
+		if (this.delayTime > MAX_DELAY_TIME) {
+			console.warn('delayTime exceeds MAX_DELAY_TIME, clamping', {
+				delayTime: MAX_DELAY_TIME
+			});
+			this.delayTime = MAX_DELAY_TIME; // 5
+		}
+		this.bufferTime = bufferTime;
 
-        // Tạo lại các buffer
-        try {
-            const bufferOptions = {
-                smoothness: 1.5,
-                vibrance: 0.6,
-                pitchShift: this.currentPitchMult,
-                isVocal: this.isVocal,
-                spectralProfile: this.spectralProfile,
-                currentGenre: this.currentGenre,
-                noiseLevel: this.noiseLevel,
-                wienerGain: this.wienerGain,
-                polyphonicPitches: this.polyphonicPitches,
-                qualityMode: this.qualityMode,
-                profile,
-                listenerProfile,
-                songStructure
-            };
+		// Tạo lại các buffer
+		try {
+			const bufferOptions = {
+				smoothness: 1.5, // Tăng từ 1.3
+				vibrance: 0.6, // Tăng từ 0.5
+				pitchShift: this.currentPitchMult,
+				isVocal: this.isVocal,
+				spectralProfile: this.spectralProfile,
+				currentGenre: this.currentGenre,
+				noiseLevel: this.noiseLevel,
+				wienerGain: this.wienerGain,
+				polyphonicPitches: this.polyphonicPitches,
+				qualityMode: this.qualityMode,
+				profile,
+				songStructure
+			};
 
-            const buffers = getShiftBuffers(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
-            this.shiftDownBuffer = buffers.shiftDownBuffer;
-            this.shiftUpBuffer = buffers.shiftUpBuffer;
-            this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
+			const buffers = getShiftBuffers(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
+			this.shiftDownBuffer = buffers.shiftDownBuffer;
+			this.shiftUpBuffer = buffers.shiftUpBuffer;
+			this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
 
-            if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
-                throw new Error('Failed to create valid buffers after reset');
-            }
-            if (this.fadeBuffer.length < this.bufferTime * this.context.sampleRate) {
-                throw new Error('fadeBuffer length insufficient after reset', {
-                    expected: this.bufferTime * this.context.sampleRate,
-                    actual: this.fadeBuffer.length
-                });
-            }
+			if (!this.shiftDownBuffer || !this.shiftUpBuffer || !this.fadeBuffer) {
+				throw new Error('Failed to create valid buffers after reset');
+			}
+			if (this.fadeBuffer.length < this.bufferTime * this.context.sampleRate) {
+				throw new Error('fadeBuffer length insufficient after reset', {
+					expected: this.bufferTime * this.context.sampleRate,
+					actual: this.fadeBuffer.length
+				});
+			}
 
-            // Lưu trạng thái buffer vào memoryManager
-            const cacheKey = this.generateCacheSignature?.(`bufferState_${this.contextId}`, {
-                profile,
-                listenerProfile,
-                songStructure,
-                bufferTime: this.bufferTime,
-                fadeTime: this.fadeTime
-            }) || `bufferState_${this.contextId}_${profile}`;
-            this.memoryManager.set(cacheKey, {
-                data: {
-                    shiftDownLength: this.shiftDownBuffer.length,
-                    shiftUpLength: this.shiftUpBuffer.length,
-                    fadeBufferLength: this.fadeBuffer.length,
-                    bufferTime: this.bufferTime,
-                    fadeTime: this.fadeTime,
-                    timestamp: Date.now(),
-                    profile,
-                    listenerProfile,
-                    deviceAdaptFactor
-                },
-                expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-                priority: 'high'
-            });
+			// Lưu trạng thái buffer vào memoryManager
+			const cacheKey = `bufferState_${this.contextId}_${profile}`;
+			this.memoryManager.set(cacheKey, {
+				data: {
+					shiftDownLength: this.shiftDownBuffer.length,
+					shiftUpLength: this.shiftUpBuffer.length,
+					fadeBufferLength: this.fadeBuffer.length,
+					bufferTime: this.bufferTime,
+					fadeTime: this.fadeTime,
+					timestamp: Date.now()
+				},
+				expiry: Date.now() + (isLowPowerDevice ? 30000 : 60000),
+				priority: 'high'
+			});
 
-            console.debug('Buffers reinitialized after reset', {
-                shiftDownLength: this.shiftDownBuffer.length,
-                shiftUpLength: this.shiftUpBuffer.length,
-                fadeBufferLength: this.fadeBuffer.length,
-                bufferTime: this.bufferTime,
-                fadeTime: this.fadeTime,
-                sampleRate: this.context.sampleRate,
-                bufferOptions,
-                profile,
-                listenerProfile,
-                songStructure,
-                deviceAdaptFactor
-            });
-        } catch (error) {
-            handleError('Error creating buffers after reset', error, {
-                bufferOptions,
-                profile,
-                listenerProfile
-            }, 'high', { memoryManager: this.memoryManager });
-            if (this.ownsContext) this.context.close();
-            throw error;
-        }
+			console.debug('Buffers reinitialized after reset', {
+				shiftDownLength: this.shiftDownBuffer.length,
+				shiftUpLength: this.shiftUpBuffer.length,
+				fadeBufferLength: this.fadeBuffer.length,
+				bufferTime: this.bufferTime,
+				fadeTime: this.fadeTime,
+				sampleRate: this.context.sampleRate,
+				bufferOptions,
+				profile,
+				songStructure
+			});
+		} catch (error) {
+			handleError('Error creating buffers after reset', error, {
+				bufferOptions,
+				profile
+			}, 'high', {
+				memoryManager: this.memoryManager
+			});
+			if (this.ownsContext) this.context.close();
+			throw error;
+		}
 
-        // Khởi tạo lại các node
-        try {
-            this.initializeNodes();
-            console.debug('Nodes reinitialized successfully after reset', { profile, listenerProfile });
-        } catch (error) {
-            handleError('Error initializing nodes after reset', error, { profile, listenerProfile }, 'high', { memoryManager: this.memoryManager });
-            if (this.ownsContext) this.context.close();
-            throw error;
-        }
+		// Khởi tạo lại các node
+		try {
+			this.initializeNodes();
+			console.debug('Nodes reinitialized successfully after reset', {
+				profile
+			});
+		} catch (error) {
+			handleError('Error initializing nodes after reset', error, {
+				profile
+			}, 'high', {
+				memoryManager: this.memoryManager
+			});
+			if (this.ownsContext) this.context.close();
+			throw error;
+		}
 
-        // Khởi tạo lại worker nếu cần
-        if (this.worker) {
-            this.initializeWorker();
-            console.debug('Worker reinitialized after reset', { profile, listenerProfile });
-        }
+		// Khởi tạo lại worker nếu cần
+		if (this.worker) {
+			this.initializeWorker();
+			console.debug('Worker reinitialized after reset', {
+				profile
+			});
+		}
 
-        // Lưu trạng thái reset vào memoryManager
-        const resetCacheKey = this.generateCacheSignature?.(`resetState_${this.contextId}`, {
-            profile,
-            listenerProfile,
-            songStructure,
-            cpuLoad
-        }) || `resetState_${this.contextId}_${profile}`;
-        this.memoryManager.set(resetCacheKey, {
-            data: {
-                isStarted: false,
-                qualityMode: this.qualityMode,
-                bufferTime: this.bufferTime,
-                profile,
-                listenerProfile,
-                songStructure,
-                deviceAdaptFactor,
-                timestamp: Date.now()
-            },
-            expiry: Date.now() + (isLowPowerDevice ? 30000 * deviceAdaptFactor : 60000 * deviceAdaptFactor), // Tối ưu expiry
-            priority: 'high'
-        });
-        this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
+		// Lưu trạng thái reset vào memoryManager
+		const resetCacheKey = `resetState_${this.contextId}_${profile}`;
+		this.memoryManager.set(resetCacheKey, {
+			data: {
+				isStarted: false,
+				qualityMode: this.qualityMode,
+				bufferTime: this.bufferTime,
+				profile,
+				songStructure,
+				timestamp: Date.now()
+			},
+			expiry: Date.now() + 60000,
+			priority: 'high'
+		});
+		this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
 
-        // Debug logging
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug('Jungle reset successfully', {
-                sampleRate: this.context.sampleRate,
-                qualityMode: this.qualityMode,
-                bufferTime: this.bufferTime,
-                fadeTime: this.fadeTime,
-                cpuLoad,
-                isLowPowerDevice,
-                profile,
-                listenerProfile,
-                songStructure,
-                deviceAdaptFactor,
-                spectralEntropy: spectralProfile.spectralEntropy,
-                harmonicRatio: spectralProfile.harmonicRatio,
-                cacheStats: this.memoryManager.getCacheStats?.()
-            });
-        }
-    } catch (error) {
-        handleError('Error during Jungle reset:', error, {
-            ownsContext: this.ownsContext,
-            contextState: this.context?.state,
-            qualityMode: this.qualityMode,
-            profile,
-            listenerProfile,
-            cpuLoad,
-            isLowPowerDevice
-        }, 'high', { memoryManager: this.memoryManager });
-        throw error;
-    }
+		// Debug logging
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug('Jungle reset successfully', {
+				sampleRate: this.context.sampleRate,
+				qualityMode: this.qualityMode,
+				bufferTime: this.bufferTime,
+				fadeTime: this.fadeTime,
+				cpuLoad,
+				isLowPowerDevice,
+				profile,
+				songStructure,
+				cacheStats: this.memoryManager.getCacheStats?.()
+			});
+		}
+	} catch (error) {
+		handleError('Error during Jungle reset:', error, {
+			ownsContext: this.ownsContext,
+			contextState: this.context?.state,
+			qualityMode: this.qualityMode,
+			profile: this.profile,
+			cpuLoad,
+			isLowPowerDevice
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+		throw error;
+	}
 };
 
 Jungle.prototype.setFilterParams = function({
-    lowPassFreq,
-    highPassFreq,
-    notchFreq,
-    filterQ,
-    notchQ,
-    lowShelfGain,
-    highShelfGain,
-    outputGain
+	lowPassFreq,
+	highPassFreq,
+	notchFreq,
+	filterQ,
+	notchQ,
+	lowShelfGain,
+	highShelfGain,
+	outputGain
 }) {
-    try {
-        const currentTime = this.context.currentTime;
-        const spectral = this.spectralProfile || {
-            subBass: 0.5,
-            bass: 0.5,
-            subMid: 0.5,
-            midLow: 0.5,
-            midHigh: 0.5,
-            high: 0.5,
-            subTreble: 0.5,
-            air: 0.5,
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            spectralComplexity: 0.5,
-            spectralEntropy: 0.5,
-            harmonicRatio: 0.5
-        };
-        const profile = this.context?.profile || 'smartStudio'; // Lấy profile từ context
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const genreFactor = {
-            'EDM': 1.2,
-            'Drum & Bass': 1.2,
-            'Hip-Hop': 1.1,
-            'Pop': 1.0,
-            'Bolero': 0.9,
-            'Classical/Jazz': 0.8,
-            'Rock/Metal': 1.0,
-            'Karaoke': 0.9
-        }[this.currentGenre] || 1.0;
+	try {
+		const currentTime = this.context.currentTime;
+		const spectral = this.spectralProfile || {
+			subBass: 0.5,
+			bass: 0.5,
+			subMid: 0.5,
+			midLow: 0.5,
+			midHigh: 0.5,
+			high: 0.5,
+			subTreble: 0.5,
+			air: 0.5,
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			spectralComplexity: 0.5
+		};
+		const genreFactor = {
+			'EDM': 1.2,
+			'Drum & Bass': 1.2,
+			'Hip-Hop': 1.1,
+			'Pop': 1.0,
+			'Bolero': 0.9,
+			'Classical/Jazz': 0.8,
+			'Rock/Metal': 1.0,
+			'Karaoke': 0.9
+		} [this.currentGenre] || 1.0;
 
-        // Tính CPU load và kiểm tra thiết bị yếu
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, { errorMessage: 'Invalid CPU load' }) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const qualityMode = cpuLoad > 0.8 || isLowPowerDevice ? 'low' : this.qualityMode || 'high';
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
+		// Tính CPU load và kiểm tra thiết bị yếu
+		const cpuLoad = this.getCPULoad ? this.getCPULoad() : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+		const qualityMode = cpuLoad > 0.8 || isLowPowerDevice ? 'low' : this.qualityMode || 'high';
 
-        // Tích hợp userFeedback
-        const feedbackList = this.memoryManager?.buffers.get('userFeedback') || [];
-        const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory) || {
-            semanticCategory: null
-        };
-        const isVocalFeedback = recentFeedback.semanticCategory === 'vocal';
-        const isClarityFeedback = recentFeedback.semanticCategory === 'clarity';
-        const isBassFeedback = recentFeedback.semanticCategory === 'bass';
-        const isWarmthFeedback = recentFeedback.semanticCategory === 'warmth';
+		// Xác định voice type để bảo vệ giọng nữ
+		let voiceType = 'middle';
+		let fundamentalFreq = 440;
+		if (this.polyphonicPitches.length > 0) {
+			fundamentalFreq = this.polyphonicPitches[0]?.frequency || fundamentalFreq;
+		}
+		if (fundamentalFreq <= 240) {
+			voiceType = 'low';
+		} else if (fundamentalFreq <= 480) {
+			voiceType = 'middle';
+		} else {
+			voiceType = 'high'; // Giọng nữ thường nằm ở đây
+		}
 
-        // Xác định voice type để bảo vệ giọng nữ
-        let voiceType = 'middle';
-        let fundamentalFreq = 440;
-        if (this.polyphonicPitches?.length > 0) {
-            fundamentalFreq = this.polyphonicPitches[0]?.frequency || fundamentalFreq;
-        }
-        if (fundamentalFreq <= 240) {
-            voiceType = 'low';
-        } else if (fundamentalFreq <= 480) {
-            voiceType = 'middle';
-        } else {
-            voiceType = 'high'; // Giọng nữ thường nằm ở đây
-        }
+		// Dynamic filter adjustments
+		const transientBoost = spectral.transientEnergy > 0.6 && ['Pop', 'Karaoke', 'EDM'].includes(this.currentGenre) ?
+			1.5 + this.transientBoost * 1.5 : 1.0;
+		const subBassAdjust = spectral.subBass < 0.4 ? 2 : spectral.subBass > 0.7 ? -1 : 0;
+		const trebleAdjust = spectral.air > 0.8 || spectral.subTreble > 0.8 ? -2 : (voiceType === 'high' ? -0.5 : 0); // Giảm treble cho giọng nữ
+		const noiseReduction = this.noiseLevel.level > 0.7 || this.wienerGain < 0.8 ? 1.5 : 1.0;
 
-        // Điều chỉnh theo profile và listenerProfile (HiFi AT2030)
-        const profileAdjust = {
-            warm: { lowPassFreq: 0.9, highPassFreq: 1.0, notchQ: 0.9, lowShelfGain: 1.1, highShelfGain: 0.8, outputGain: 1.0 },
-            bright: { lowPassFreq: 1.1, highPassFreq: 0.9, notchQ: 0.8, lowShelfGain: 0.8, highShelfGain: 1.2, outputGain: 1.0 },
-            bassHeavy: { lowPassFreq: 0.8, highPassFreq: 1.1, notchQ: 1.0, lowShelfGain: 1.2, highShelfGain: 0.9, outputGain: 1.0 },
-            vocal: { lowPassFreq: 1.0, highPassFreq: 0.9, notchQ: 0.8, lowShelfGain: 0.9, highShelfGain: 1.1, outputGain: 1.1 },
-            proNatural: { lowPassFreq: 1.0, highPassFreq: 1.0, notchQ: 1.0, lowShelfGain: 1.0, highShelfGain: 1.0, outputGain: 1.0 },
-            karaokeDynamic: { lowPassFreq: 1.0, highPassFreq: 0.9, notchQ: 0.7, lowShelfGain: 0.9, highShelfGain: 1.1, outputGain: 1.2 },
-            rockMetal: { lowPassFreq: 0.9, highPassFreq: 1.1, notchQ: 0.9, lowShelfGain: 1.1, highShelfGain: 1.0, outputGain: 1.0 },
-            smartStudio: { lowPassFreq: 1.0, highPassFreq: 1.0, notchQ: 0.9, lowShelfGain: 1.0, highShelfGain: 1.0, outputGain: 1.0 }
-        }[profile] || { lowPassFreq: 1.0, highPassFreq: 1.0, notchQ: 1.0, lowShelfGain: 1.0, highShelfGain: 1.0, outputGain: 1.0 };
-        const listenerAdjust = listenerProfile === 'audiophile' ? { lowPassFreq: 1.1, highShelfGain: 1.1, outputGain: 1.0 } :
-            listenerProfile === 'casual' ? { lowPassFreq: 0.9, highShelfGain: 0.9, outputGain: 0.9 } : { lowPassFreq: 1.0, highShelfGain: 1.0, outputGain: 1.0 };
+		// Giới hạn pitch shift để bảo vệ giọng nữ
+		const maxPitchShift = voiceType === 'high' ? 0.5 : 0.8; // Giới hạn pitch shift cho giọng nữ
+		const adjustedPitchMult = Math.max(-maxPitchShift, Math.min(maxPitchShift, this.currentPitchMult));
 
-        // Dynamic filter adjustments
-        const transientBoost = (spectral.transientEnergy > 0.6 && ['Pop', 'Karaoke', 'EDM'].includes(this.currentGenre)) || profile === 'karaokeDynamic' ?
-            Math.min(1.5 + this.transientBoost * 0.5, 1.8) : 1.0; // Giới hạn transientBoost
-        const subBassAdjust = spectral.subBass < 0.4 ? 1.5 : spectral.subBass > 0.7 ? -0.5 : 0; // Giảm mức tăng bass
-        const trebleAdjust = (spectral.air > 0.8 || spectral.subTreble > 0.8 ? -1.0 : 0) + (voiceType === 'high' ? -0.5 : 0); // Giảm treble cho giọng nữ
-        const noiseReduction = this.noiseLevel.level > 0.7 || this.wienerGain < 0.8 ? 1.2 : 1.0; // Giảm noiseReduction
+		// Điều chỉnh bufferTime dựa trên qualityMode và spectralComplexity
+		let bufferTimeFactor = qualityMode === 'high' ? 1.5 : 1.0;
+		if (spectral.spectralComplexity > 0.7 || Math.abs(adjustedPitchMult) > 0.3) {
+			bufferTimeFactor *= 1.2;
+		}
+		this.bufferTime = Math.max(this.fadeTime * 2.5, this.bufferTime * bufferTimeFactor);
 
-        // Tích hợp PsychoacousticWeight và EmotionTimbreMap (HiFi AT2030)
-        const computePsychoacousticWeight = (freq) => {
-            try {
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                return fletcherMunson(freq) * perceptualSensitivity * deviceAdaptFactor;
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { freq }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
+		// Cập nhật buffer với formant bảo vệ giọng nữ
+		if (Math.abs(adjustedPitchMult) > 0.2 || spectral.spectralComplexity > 0.7 || voiceType === 'high') {
+			const bufferOptions = {
+				fadeType: 'bezier',
+				smoothness: voiceType === 'high' ? 1.5 : 1.3, // Tăng smoothness cho giọng nữ
+				vibrance: voiceType === 'high' ? 0.7 : 0.5, // Tăng vibrance để giữ độ trong
+				pitchShift: adjustedPitchMult,
+				isVocal: this.isVocal,
+				spectralProfile: spectral,
+				qualityMode,
+				vocalPresence: spectral.vocalPresence
+			};
+			this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
+			if (!this.fadeBuffer) {
+				throw new Error("Failed to update fade buffer");
+			}
+			this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize());
+		}
 
-        const computeEmotionTimbreMap = (freq) => {
-            try {
-                const splinePoints = {
-                    warm: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 0.9] },
-                    bright: { freq: [1000, 4000, 8000], gain: [0.9, 1.0, 1.2] },
-                    bassHeavy: { freq: [50, 100, 200], gain: [1.3, 1.2, 1.0] },
-                    vocal: { freq: [200, 1000, 2000], gain: [1.0, 1.2, 1.1] },
-                    proNatural: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] },
-                    karaokeDynamic: { freq: [200, 1000, 2000], gain: [1.1, 1.3, 1.1] },
-                    rockMetal: { freq: [100, 4000, 8000], gain: [1.2, 1.0, 1.15] },
-                    smartStudio: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.05] },
-                    neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                let gain = 1.0;
-                for (let i = 1; i < profilePoints.freq.length; i++) {
-                    if (freq >= profilePoints.freq[i - 1] && freq <= profilePoints.freq[i]) {
-                        const t = (freq - profilePoints.freq[i - 1]) / (profilePoints.freq[i] - profilePoints.freq[i - 1]);
-                        gain = (1 - t) * profilePoints.gain[i - 1] + t * profilePoints.gain[i];
-                    }
-                }
-                return ensureFinite(gain * deviceAdaptFactor, 1.0);
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { freq }, 'low', { memoryManager: this.memoryManager });
-                return 1.0;
-            }
-        };
+		// Low-pass filter
+		if (lowPassFreq !== undefined) {
+			this.lowPassFreq = Math.max(20, Math.min(20000, lowPassFreq));
+			this.lowPassFreq = spectral.air > 0.7 || voiceType === 'high' ? Math.min(this.lowPassFreq, 16000) : this.lowPassFreq; // Bảo vệ giọng nữ
+			this.lowPassFreq *= transientBoost > 1.2 ? 1.1 : 1.0;
+			if (spectral.spectralComplexity > 0.7 && Math.abs(adjustedPitchMult) > 0.5) {
+				this.lowPassFreq *= 0.85; // Giảm mạnh hơn để tránh méo tiếng
+				console.debug(`Reduced lowPassFreq to ${this.lowPassFreq}Hz due to high spectral complexity and voiceType=${voiceType}`);
+			}
+			this.lowPassFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				this.lowPassFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Giới hạn pitch shift để bảo vệ giọng nữ
-        const maxPitchShift = voiceType === 'high' ? 0.5 : 0.8;
-        const adjustedPitchMult = Math.max(-maxPitchShift, Math.min(maxPitchShift, this.currentPitchMult));
+		// High-pass filter
+		if (highPassFreq !== undefined) {
+			this.highPassFreq = Math.max(20, Math.min(20000, highPassFreq));
+			this.highPassFreq = spectral.subBass > 0.6 ? Math.max(this.highPassFreq, 50) : this.highPassFreq;
+			if (voiceType === 'high') {
+				this.highPassFreq = Math.max(this.highPassFreq, 80); // Tránh cắt tần số thấp quá nhiều cho giọng nữ
+			}
+			this.highPassFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				this.highPassFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Điều chỉnh bufferTime dựa trên qualityMode, spectralComplexity, và feedback
-        let bufferTimeFactor = qualityMode === 'high' ? 1.5 : 1.0;
-        if (spectral.spectralComplexity > 0.7 || Math.abs(adjustedPitchMult) > 0.3 || isVocalFeedback) {
-            bufferTimeFactor *= 1.1; // Giảm mức tăng so với gốc
-        }
-        this.bufferTime = Math.max(this.fadeTime * 2.5, this.bufferTime * bufferTimeFactor * deviceAdaptFactor);
+		// Notch filter
+		if (notchFreq !== undefined) {
+			this.notchFreq = Math.max(20, Math.min(20000, notchFreq));
+			this.notchFreq = this.noiseLevel.midFreq > 0.5 || voiceType === 'high' ? 4500 : this.notchFreq; // Tăng tần số notch cho giọng nữ
+			this.notchFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				this.notchFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
+		if (notchQ !== undefined) {
+			this.notchQ = Math.max(0.1, Math.min(10, notchQ));
+			this.notchQ *= noiseReduction * (voiceType === 'high' ? 0.8 : 1.0); // Giảm Q cho giọng nữ để tránh mất chi tiết
+			this.notchFilter.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				this.notchQ, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Cập nhật buffer với formant bảo vệ giọng nữ
-        if (Math.abs(adjustedPitchMult) > 0.2 || spectral.spectralComplexity > 0.7 || voiceType === 'high' || isVocalFeedback) {
-            const bufferOptions = {
-                fadeType: 'bezier',
-                smoothness: (voiceType === 'high' || isVocalFeedback) ? 1.5 : 1.3,
-                vibrance: (voiceType === 'high' || isVocalFeedback) ? 0.7 : 0.5,
-                pitchShift: adjustedPitchMult,
-                isVocal: this.isVocal,
-                spectralProfile: spectral,
-                qualityMode,
-                vocalPresence: spectral.vocalPresence,
-                profile,
-                listenerProfile
-            };
-            this.fadeBuffer = getFadeBuffer(this.context, this.bufferTime, this.fadeTime, bufferOptions, this.memoryManager);
-            if (!this.fadeBuffer) {
-                throw new Error("Failed to update fade buffer");
-            }
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
+		// Low-shelf filter
+		if (lowShelfGain !== undefined) {
+			const adjustedLowShelfGain = lowShelfGain + subBassAdjust * genreFactor * (voiceType === 'high' ? 0.7 : 1.0); // Giảm bass cho giọng nữ
+			this.lowShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				adjustedLowShelfGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.subBassFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				adjustedLowShelfGain * 0.5, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Low-pass filter
-        if (lowPassFreq !== undefined) {
-            this.lowPassFreq = Math.max(20, Math.min(20000, lowPassFreq * profileAdjust.lowPassFreq * listenerAdjust.lowPassFreq));
-            this.lowPassFreq = (spectral.air > 0.7 || voiceType === 'high' || isClarityFeedback) ? Math.min(this.lowPassFreq, 16000) : this.lowPassFreq;
-            this.lowPassFreq *= transientBoost > 1.2 ? 1.05 : 1.0; // Giảm mức tăng
-            if (spectral.spectralComplexity > 0.7 || spectral.spectralEntropy > 0.7 || Math.abs(adjustedPitchMult) > 0.5) {
-                this.lowPassFreq *= 0.9; // Giảm nhẹ hơn để giữ chi tiết
-                console.debug(`Reduced lowPassFreq to ${this.lowPassFreq}Hz due to high spectral complexity and voiceType=${voiceType}`);
-            }
-            this.lowPassFreq *= computePsychoacousticWeight(this.lowPassFreq);
-            this.lowPassFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                this.lowPassFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// High-shelf filter
+		if (highShelfGain !== undefined) {
+			const adjustedHighShelfGain = highShelfGain + trebleAdjust + (transientBoost > 1.2 ? 1 : 0) + (voiceType === 'high' ? 0.5 : 0); // Tăng nhẹ treble cho giọng nữ
+			this.highShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				adjustedHighShelfGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.subTrebleFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				adjustedHighShelfGain * 0.5, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // High-pass filter
-        if (highPassFreq !== undefined) {
-            this.highPassFreq = Math.max(20, Math.min(20000, highPassFreq * profileAdjust.highPassFreq * listenerAdjust.highPassFreq));
-            this.highPassFreq = (spectral.subBass > 0.6 || isBassFeedback) ? Math.max(this.highPassFreq, 50) : this.highPassFreq;
-            if (voiceType === 'high' || isVocalFeedback) {
-                this.highPassFreq = Math.max(this.highPassFreq, 80);
-            }
-            this.highPassFreq *= computePsychoacousticWeight(this.highPassFreq);
-            this.highPassFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                this.highPassFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// Output gain
+		if (outputGain !== undefined) {
+			const adjustedOutputGain = outputGain * (1 + Math.abs(adjustedPitchMult) * 0.2) * (voiceType === 'high' ? 1.1 : 1.0); // Tăng nhẹ gain cho giọng nữ
+			this.outputGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				adjustedOutputGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Notch filter
-        if (notchFreq !== undefined) {
-            this.notchFreq = Math.max(20, Math.min(20000, notchFreq));
-            this.notchFreq = (this.noiseLevel.midFreq > 0.5 || voiceType === 'high' || isVocalFeedback) ? 4500 : this.notchFreq;
-            this.notchFreq *= computePsychoacousticWeight(this.notchFreq);
-            this.notchFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                this.notchFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
-        if (notchQ !== undefined) {
-            this.notchQ = Math.max(0.1, Math.min(10, notchQ * profileAdjust.notchQ * deviceAdaptFactor));
-            this.notchQ *= noiseReduction * ((voiceType === 'high' || isVocalFeedback) ? 0.8 : 1.0);
-            this.notchFilter.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                this.notchQ, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// De-essing adjustment
+		if (this.deEsser) {
+			const deEssGain = (spectral.air > 0.8 || spectral.subTreble > 0.8 || voiceType === 'high') ? -4 : -2; // Tăng de-essing cho giọng nữ
+			this.deEsser.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				deEssGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // Low-shelf filter
-        if (lowShelfGain !== undefined) {
-            const adjustedLowShelfGain = Math.max(-12, Math.min(12, (lowShelfGain + subBassAdjust) * profileAdjust.lowShelfGain * genreFactor * ((voiceType === 'high' || isVocalFeedback) ? 0.7 : 1.0) * deviceAdaptFactor)); // Giới hạn gain
-            this.lowShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                adjustedLowShelfGain * computeEmotionTimbreMap(100), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.subBassFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                adjustedLowShelfGain * 0.5 * computeEmotionTimbreMap(50), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// Formant adjustment để bảo vệ giọng nữ
+		if (this.formantFilter1 && this.formantFilter2) {
+			let f1Freq = 450,
+				f2Freq = 1900,
+				formantGain = 3.2,
+				formantQ = 0.9;
+			if (voiceType === 'high') {
+				f1Freq = 580 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				f2Freq = 2350 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				formantGain = 2.8; // Giảm gain để giữ tự nhiên
+				formantQ = 0.6; // Giảm Q để tránh sắc nét quá mức
+			} else if (voiceType === 'middle') {
+				f1Freq = 450 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				f2Freq = 1950 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				formantGain = 3.6;
+				formantQ = 0.9;
+			} else {
+				f1Freq = 340 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				f2Freq = 1550 * (1 + (spectral.vocalPresence || 0) * 0.12);
+				formantGain = 4.0;
+				formantQ = 1.2;
+			}
+			if (Math.abs(adjustedPitchMult) > 0.3) {
+				const pitchShiftFactor = Math.pow(2, adjustedPitchMult * 0.6); // Giảm tác động pitch shift
+				f1Freq *= pitchShiftFactor;
+				f2Freq *= pitchShiftFactor;
+				formantGain = Math.max(2.0, formantGain - Math.abs(adjustedPitchMult) * 0.3);
+			}
+			this.formantFilter1.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				f1Freq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.formantFilter1.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				formantGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.formantFilter1.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				formantQ, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.formantFilter2.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				f2Freq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.formantFilter2.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				formantGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.formantFilter2.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				formantQ, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // High-shelf filter
-        if (highShelfGain !== undefined) {
-            const adjustedHighShelfGain = Math.max(-12, Math.min(12, (highShelfGain + trebleAdjust + (transientBoost > 1.2 ? 0.5 : 0)) * profileAdjust.highShelfGain * listenerAdjust.highShelfGain * ((voiceType === 'high' || isVocalFeedback) ? 0.8 : 1.0) * deviceAdaptFactor)); // Giới hạn gain
-            this.highShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                adjustedHighShelfGain * computeEmotionTimbreMap(4000), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.subTrebleFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                adjustedHighShelfGain * 0.5 * computeEmotionTimbreMap(8000), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// Apply qualityPrediction recommendations
+		(this.qualityPrediction.recommendations || []).forEach(rec => {
+			if (typeof rec !== 'string') return;
+			if (rec.includes("Reduce sub-bass")) {
+				const reducedLowShelfGain = Math.max(this.lowShelfGain.gain.value - 2, 0);
+				const reducedSubBassGain = Math.max(this.subBassFilter.gain.value - 1, 0);
+				this.lowShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					reducedLowShelfGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+				this.subBassFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					reducedSubBassGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+			}
+			if (rec.includes("Reduce treble/sub-treble")) {
+				const reducedHighShelfGain = Math.max(this.highShelfGain.gain.value - (voiceType === 'high' ? 1.5 : 2), 0);
+				const reducedSubTrebleGain = Math.max(this.subTrebleFilter.gain.value - (voiceType === 'high' ? 0.8 : 1), 0);
+				this.highShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					reducedHighShelfGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+				this.subTrebleFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					reducedSubTrebleGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+			}
+			if (rec.includes("Apply noise reduction")) {
+				this.notchFilter.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					this.notchQ * (voiceType === 'high' ? 1.5 : 2.0), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+				this.notchFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					voiceType === 'high' ? 4500 : 4000, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+			}
+			if (rec.includes("Boost vocal clarity")) {
+				this.highMidFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					this.highMidFilter.gain.value + (voiceType === 'high' ? 2.0 : 1.5), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+				this.formantFilter1.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					formantGain + 0.5, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+				this.formantFilter2.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+					formantGain + 0.5, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+				);
+			}
+		});
 
-        // Output gain
-        if (outputGain !== undefined) {
-            const adjustedOutputGain = Math.max(-12, Math.min(12, outputGain * profileAdjust.outputGain * listenerAdjust.outputGain * (1 + Math.abs(adjustedPitchMult) * 0.1) * ((voiceType === 'high' || isVocalFeedback) ? 1.1 : 1.0) * deviceAdaptFactor)); // Giới hạn gain
-            this.outputGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                adjustedOutputGain, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// Harmonic enhancement dựa trên polyphonicPitches
+		if (this.polyphonicPitches.length > 0) {
+			const dominantPitch = this.polyphonicPitches[0]?.frequency || fundamentalFreq;
+			const targetFreq = Math.min(dominantPitch * (voiceType === 'high' ? 2.2 : 2), 3500); // Tăng tần số cho giọng nữ
+			this.highMidFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				targetFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+			this.highMidFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
+				this.highMidFilter.gain.value + (voiceType === 'high' ? 2.0 : 1.5), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
+			);
+		}
 
-        // De-essing adjustment
-        if (this.deEsser) {
-            const deEssGain = Math.max(-12, Math.min(-2, (spectral.air > 0.8 || spectral.subTreble > 0.8 || voiceType === 'high' || isVocalFeedback) ? -4 : -2)); // Giới hạn de-essing
-            this.deEsser.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                deEssGain * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
+		// Lưu thông tin voice profile
+		if (this.memoryManager) {
+			this.memoryManager.buffers.set('voiceProfile', {
+				voiceType,
+				fundamentalFreq,
+				vocalPresence: spectral.vocalPresence,
+				timestamp: Date.now(),
+				expiry: Date.now() + 10000
+			});
+			this.memoryManager.pruneCache(100);
+		}
 
-        // Formant adjustment để bảo vệ giọng nữ
-        if (this.formantFilter1 && this.formantFilter2) {
-            let f1Freq = 450, f2Freq = 1900, formantGain = 3.2, formantQ = 0.9;
-            if (voiceType === 'high' || isVocalFeedback) {
-                f1Freq = 580 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                f2Freq = 2350 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                formantGain = 2.8 * (isWarmthFeedback ? 1.1 : 1.0);
-                formantQ = 0.6;
-            } else if (voiceType === 'middle') {
-                f1Freq = 450 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                f2Freq = 1950 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                formantGain = 3.6 * (isWarmthFeedback ? 1.1 : 1.0);
-                formantQ = 0.9;
-            } else {
-                f1Freq = 340 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                f2Freq = 1550 * (1 + (spectral.vocalPresence || 0) * 0.1);
-                formantGain = 4.0 * (isWarmthFeedback ? 1.1 : 1.0);
-                formantQ = 1.2;
-            }
-            if (Math.abs(adjustedPitchMult) > 0.3 || spectral.spectralEntropy > 0.7) {
-                const pitchShiftFactor = Math.pow(2, adjustedPitchMult * 0.5); // Giảm tác động
-                f1Freq *= pitchShiftFactor * computePsychoacousticWeight(f1Freq);
-                f2Freq *= pitchShiftFactor * computePsychoacousticWeight(f2Freq);
-                formantGain = Math.max(2.0, formantGain - Math.abs(adjustedPitchMult) * 0.2);
-            }
-            f1Freq *= computeEmotionTimbreMap(f1Freq);
-            f2Freq *= computeEmotionTimbreMap(f2Freq);
-            this.formantFilter1.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                f1Freq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.formantFilter1.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                formantGain * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.formantFilter1.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                formantQ * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.formantFilter2.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                f2Freq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.formantFilter2.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                formantGain * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.formantFilter2.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                formantQ * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
-
-        // Apply qualityPrediction recommendations
-        (this.qualityPrediction.recommendations || []).forEach(rec => {
-            if (typeof rec !== 'string') return;
-            if (rec.includes("Reduce sub-bass") || isBassFeedback) {
-                const reducedLowShelfGain = Math.max(this.lowShelfGain.gain.value - 1.0, -12); // Giảm mức cắt
-                const reducedSubBassGain = Math.max(this.subBassFilter.gain.value - 0.5, -12);
-                this.lowShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    reducedLowShelfGain * computeEmotionTimbreMap(100), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-                this.subBassFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    reducedSubBassGain * computeEmotionTimbreMap(50), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-            }
-            if (rec.includes("Reduce treble/sub-treble")) {
-                const reducedHighShelfGain = Math.max(this.highShelfGain.gain.value - ((voiceType === 'high' || isVocalFeedback) ? 1.0 : 1.5), -12);
-                const reducedSubTrebleGain = Math.max(this.subTrebleFilter.gain.value - ((voiceType === 'high' || isVocalFeedback) ? 0.5 : 0.8), -12);
-                this.highShelfGain.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    reducedHighShelfGain * computeEmotionTimbreMap(4000), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-                this.subTrebleFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    reducedSubTrebleGain * computeEmotionTimbreMap(8000), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-            }
-            if (rec.includes("Apply noise reduction")) {
-                this.notchFilter.Q[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    this.notchQ * ((voiceType === 'high' || isVocalFeedback) ? 1.2 : 1.5) * deviceAdaptFactor, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-                this.notchFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    (voiceType === 'high' || isVocalFeedback) ? 4500 : 4000, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-            }
-            if (rec.includes("Boost vocal clarity") || isVocalFeedback || isClarityFeedback) {
-                const clarityBoost = (isVocalFeedback || isClarityFeedback) ? 1.5 : 1.0;
-                this.highMidFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    Math.min(this.highMidFilter.gain.value + ((voiceType === 'high' || isVocalFeedback) ? 1.5 : 1.0) * clarityBoost, 12), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-                this.formantFilter1.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    Math.min(formantGain + 0.3 * clarityBoost, 12), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-                this.formantFilter2.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                    Math.min(formantGain + 0.3 * clarityBoost, 12), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-                );
-            }
-        });
-
-        // Harmonic enhancement dựa trên polyphonicPitches và harmonicRatio
-        if (this.polyphonicPitches?.length > 0 && spectral.harmonicRatio > 0.7) {
-            const dominantPitch = this.polyphonicPitches[0]?.frequency || fundamentalFreq;
-            const targetFreq = Math.min(dominantPitch * ((voiceType === 'high' || isVocalFeedback) ? 2.2 : 2) * computeEmotionTimbreMap(dominantPitch), 3500);
-            this.highMidFilter.frequency[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                targetFreq, currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-            this.highMidFilter.gain[qualityMode === 'low' ? 'setValueAtTime' : 'linearRampToValueAtTime'](
-                Math.min(this.highMidFilter.gain.value + ((voiceType === 'high' || isVocalFeedback) ? 1.5 : 1.0), 12), currentTime + (qualityMode === 'low' ? 0 : this.rampTime)
-            );
-        }
-
-        // Lưu thông tin voice profile
-        if (this.memoryManager) {
-            this.memoryManager.buffers.set('voiceProfile', {
-                voiceType,
-                fundamentalFreq,
-                vocalPresence: spectral.vocalPresence,
-                profile,
-                listenerProfile,
-                timestamp: Date.now(),
-                expiry: Date.now() + 10000
-            }, { priority: 'medium' });
-            this.memoryManager.pruneCache(this.calculateMaxCacheSize?.() || 100);
-        }
-
-        // Debug log
-        console.debug('Filter parameters set successfully with vocal protection', {
-            lowPassFreq: this.lowPassFreq,
-            highPassFreq: this.highPassFreq,
-            notchFreq: this.notchFreq,
-            notchQ: this.notchQ,
-            lowShelfGain: this.lowShelfGain?.gain.value,
-            highShelfGain: this.highShelfGain?.gain.value,
-            outputGain: this.outputGain?.gain.value,
-            spectralProfile: spectral,
-            qualityMode,
-            cpuLoad,
-            voiceType,
-            fundamentalFreq,
-            profile,
-            listenerProfile,
-            transientBoost,
-            subBassAdjust,
-            trebleAdjust,
-            noiseReduction,
-            isVocalFeedback,
-            isClarityFeedback,
-            isBassFeedback,
-            isWarmthFeedback
-        });
-    } catch (error) {
-        handleError("Error setting filter parameters:", error, {
-            lowPassFreq,
-            highPassFreq,
-            notchFreq,
-            filterQ,
-            notchQ,
-            lowShelfGain,
-            highShelfGain,
-            outputGain,
-            spectralProfile: this.spectralProfile,
-            qualityMode,
-            voiceType,
-            profile,
-            listenerProfile
-        });
-    }
+		console.debug('Filter parameters set successfully with vocal protection', {
+			lowPassFreq: this.lowPassFreq,
+			highPassFreq: this.highPassFreq,
+			notchFreq: this.notchFreq,
+			spectralProfile: spectral,
+			qualityMode,
+			cpuLoad,
+			voiceType,
+			fundamentalFreq
+		});
+	} catch (error) {
+		handleError("Error setting filter parameters:", error, {
+			lowPassFreq,
+			highPassFreq,
+			notchFreq,
+			filterQ,
+			notchQ,
+			lowShelfGain,
+			highShelfGain,
+			outputGain,
+			spectralProfile: this.spectralProfile,
+			qualityMode: this.qualityMode,
+			voiceType
+		});
+	}
 };
 
 Jungle.prototype.setSoundProfile = function(profile) {
@@ -9494,1011 +8231,682 @@ Jungle.prototype.setSoundProfile = function(profile) {
  * @returns {string} Hash string
  */
 function simpleHash(obj) {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-    try {
-        // Chuẩn hóa object để hash
-        const contextToHash = {
-            spectralProfile: {
-                chroma: obj.spectralProfile?.chroma,
-                subBass: obj.spectralProfile?.subBass,
-                bass: obj.spectralProfile?.bass,
-                mid: obj.spectralProfile?.mid,
-                high: obj.spectralProfile?.high,
-                spectralFlux: obj.spectralProfile?.spectralFlux,
-                spectralEntropy: obj.spectralProfile?.spectralEntropy,
-                harmonicRatio: obj.spectralProfile?.harmonicRatio,
-                vocalPresence: obj.spectralProfile?.vocalPresence
-            },
-            tempoMemory: obj.tempoMemory,
-            currentGenre: obj.currentGenre,
-            currentKey: obj.currentKey,
-            polyphonicPitchesLength: obj.polyphonicPitches?.length,
-            isVocal: obj.isVocal,
-            noiseLevel: obj.noiseLevel,
-            qualityPrediction: obj.qualityPrediction,
-            listenerProfile: obj.listenerProfile || 'standard' // Thêm listenerProfile từ HiFi AT2030
-        };
-        
-        // Giới hạn kích thước chuỗi JSON trên thiết bị yếu
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const str = JSON.stringify(contextToHash, (key, value) => {
-            if (isLowPowerDevice && key === 'chroma' && Array.isArray(value)) {
-                return value.slice(0, 12); // Giới hạn chroma để giảm tải
-            }
-            return value;
-        });
-
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) - hash) + str.charCodeAt(i);
-            hash |= 0; // Convert to 32-bit integer
-        }
-        const hashResult = hash.toString(36);
-        
-        if (isDebug) {
-            console.debug('Generated hash', { input: contextToHash, hash: hashResult });
-        }
-        
-        return hashResult;
-    } catch (error) {
-        handleError('Error generating hash', error, { input: obj }, 'low');
-        return JSON.stringify(obj); // Fallback
-    }
+	const str = JSON.stringify({
+		spectralProfile: obj.spectralProfile,
+		isVocal: obj.isVocal,
+		polyphonicPitches: obj.polyphonicPitches?.length
+	});
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		hash = ((hash << 5) - hash) + str.charCodeAt(i);
+		hash |= 0; // Convert to 32-bit integer
+	}
+	return hash.toString(36);
 }
 
 Jungle.prototype.initializeContextAnalyzer = function() {
-    return {
-        analyze: (context, memoryManager) => {
-            // Kiểm tra đầu vào
-            if (!context || typeof context !== 'object') {
-                handleError('Invalid context', new Error('Context must be an object'), {}, 'high', {
-                    memoryManager
-                });
-                return null;
-            }
+	return {
+		analyze: (context, memoryManager) => {
+			// Kiểm tra đầu vào
+			if (!context || typeof context !== 'object') {
+				handleError('Invalid context', new Error('Context must be an object'), {}, 'high', {
+					memoryManager
+				});
+				return null;
+			}
 
-            const {
-                spectralProfile = {},
-                tempoMemory = {},
-                currentGenre = 'unknown',
-                currentKey = 'unknown',
-                polyphonicPitches = [],
-                noiseLevel = 0.5,
-                qualityPrediction = 0.5,
-                isVocal = false,
-                profile = 'smartStudio', // Thêm profile từ optimizeSoundProfile
-                listenerProfile = 'standard' // Thêm listenerProfile từ HiFi AT2030
-            } = context;
+			const {
+				spectralProfile = {},
+					tempoMemory = {},
+					currentGenre = 'unknown',
+					currentKey = 'unknown',
+					polyphonicPitches = [],
+					noiseLevel = 0.5,
+					qualityPrediction = 0.5,
+					isVocal = false
+			} = context;
 
-            // Lấy cache từ MemoryManager
-            const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-            let cachedResult = null;
-            if (memoryManager && typeof memoryManager.get === 'function') {
-                const cacheKey = `contextAnalysis_${simpleHash({ ...context, listenerProfile })}`;
-                cachedResult = memoryManager.get(cacheKey);
-                if (cachedResult) {
-                    if (isDebug) console.debug(`Retrieved cached analysis for key: ${cacheKey}`, cachedResult);
-                    return cachedResult;
-                }
-            }
+			// Lấy cache từ MemoryManager
+			const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+			let cachedResult = null;
+			if (memoryManager && typeof memoryManager.get === 'function') {
+				const cacheKey = `contextAnalysis_${simpleHash(context)}`;
+				cachedResult = memoryManager.get(cacheKey);
+				if (cachedResult) {
+					if (isDebug) console.debug(`Retrieved cached analysis for key: ${cacheKey}`, cachedResult);
+					return cachedResult;
+				}
+			}
 
-            try {
-                // Kiểm tra CPU load
-                const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-                const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-                const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // AT2030 DeviceAdaptFactor
+			try {
+				// Tính spectralComplexity
+				let spectralComplexity = 0.5;
+				if (spectralProfile.chroma && Array.isArray(spectralProfile.chroma) && spectralProfile.chroma.length > 0) {
+					const sum = spectralProfile.chroma.reduce((sum, val) => {
+						const finiteVal = ensureFinite(val, 0, {
+							errorMessage: 'Invalid chroma value'
+						});
+						return sum + finiteVal * finiteVal;
+					}, 0);
+					spectralComplexity = sum / spectralProfile.chroma.length;
+				} else if (isDebug) {
+					console.debug('Invalid or missing chroma, using default spectralComplexity: 0.5');
+				}
+				spectralComplexity = ensureFinite(spectralComplexity, 0.5, {
+					errorMessage: 'Invalid spectralComplexity'
+				});
+				spectralComplexity = Math.max(0, Math.min(1, spectralComplexity));
 
-                // Tính spectralComplexity với HiFi AT2030
-                let spectralComplexity = 0.5;
-                if (spectralProfile.chroma && Array.isArray(spectralProfile.chroma) && spectralProfile.chroma.length > 0) {
-                    const sum = spectralProfile.chroma.reduce((sum, val) => {
-                        const finiteVal = ensureFinite(val, 0, {
-                            errorMessage: 'Invalid chroma value'
-                        });
-                        return sum + finiteVal * finiteVal;
-                    }, 0);
-                    spectralComplexity = sum / spectralProfile.chroma.length;
-                    // Tích hợp spectralFlux, spectralEntropy, harmonicRatio
-                    spectralComplexity *= (1.0 + 0.2 * (spectralProfile.spectralFlux || 0.5) + 0.1 * (spectralProfile.spectralEntropy || 0.5));
-                    if (spectralProfile.harmonicRatio > 0.7) {
-                        spectralComplexity *= 1.1;
-                    }
-                } else if (isDebug) {
-                    console.debug('Invalid or missing chroma, using default spectralComplexity: 0.5');
-                }
-                spectralComplexity = ensureFinite(spectralComplexity, 0.5, {
-                    errorMessage: 'Invalid spectralComplexity'
-                });
-                spectralComplexity = Math.max(0, Math.min(1, spectralComplexity));
+				// Lấy các tham số khác
+				const transientEnergy = ensureFinite(spectralProfile.transientEnergy, 0.5, {
+					errorMessage: 'Invalid transientEnergy'
+				});
+				const vocalPresence = isVocal ? 1.0 : ensureFinite(spectralProfile.vocalPresence, 0.5, {
+					errorMessage: 'Invalid vocalPresence'
+				});
+				const harmonicComplexity = ensureFinite(polyphonicPitches.length, 0) > 1 ? 1.3 : 1.0;
 
-                // Lấy các tham số khác
-                const transientEnergy = ensureFinite(spectralProfile.transientEnergy, 0.5, {
-                    errorMessage: 'Invalid transientEnergy'
-                });
-                const vocalPresence = isVocal ? 1.0 : ensureFinite(spectralProfile.vocalPresence, 0.5, {
-                    errorMessage: 'Invalid vocalPresence'
-                });
-                const harmonicComplexity = ensureFinite(polyphonicPitches.length, 0) > 1 ? 1.3 : 1.0;
+				// Kiểm tra CPU load
+				const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+				const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+				const cpuLoadAdjust = cpuLoad > 0.9 || isLowPowerDevice ? 0.85 : 1.0;
 
-                // Tính SpectralAttention
-                const computeSpectralAttention = () => {
-                    try {
-                        const fftSize = this._analyser?.fftSize || 2048;
-                        const spectralAttention = new Float32Array(fftSize / 2);
-                        let spectralFlux = spectralProfile.spectralFlux || 0.5;
-                        let sumExp = 0;
-                        for (let i = 0; i < fftSize / 2; i++) {
-                            const energy = this._analyser?.magnitudes ? this._analyser.magnitudes[i] * this._analyser.magnitudes[i] : 0.5;
-                            spectralAttention[i] = Math.exp(energy * spectralFlux);
-                            sumExp += spectralAttention[i];
-                        }
-                        for (let i = 0; i < fftSize / 2; i++) {
-                            spectralAttention[i] = ensureFinite(spectralAttention[i] / (sumExp + 1e-10), 1.0);
-                        }
-                        // Tăng attention cho vocal và transient
-                        if (profile === 'vocal' || vocalPresence > 0.7) {
-                            for (let i = Math.floor(200 * fftSize / this.context.sampleRate); i < Math.floor(2000 * fftSize / this.context.sampleRate); i++) {
-                                spectralAttention[i] *= 1.2;
-                            }
-                        }
-                        if (profile === 'rockMetal' || transientEnergy > 0.8) {
-                            for (let i = 0; i < Math.floor(100 * fftSize / this.context.sampleRate); i++) {
-                                spectralAttention[i] *= 1.15;
-                            }
-                        }
-                        return spectralAttention;
-                    } catch (error) {
-                        handleError('SpectralAttention computation failed', error, { fftSize: this._analyser?.fftSize }, 'low', { memoryManager });
-                        return new Float32Array(this._analyser?.fftSize / 2 || 1024).fill(1.0);
-                    }
-                };
+				// Tính fadeTime
+				const minFadeTime = 0.005;
+				const baseFadeTime = 0.4 * (vocalPresence > 0.7 ? 1.4 : 1.0);
+				const noiseAdjust = noiseLevel > 0.7 ? 1.2 : 1.0; // Tăng fadeTime nếu noiseLevel cao
+				const qualityAdjust = qualityPrediction > 0.7 ? 1.1 : 1.0; // Tăng fadeTime nếu chất lượng cao
+				let fadeTime = Math.max(minFadeTime, baseFadeTime * (
+					1.0 + 0.3 * spectralComplexity + 0.2 * transientEnergy + 0.3 * vocalPresence
+				) * noiseAdjust * qualityAdjust * cpuLoadAdjust);
+				fadeTime = ensureFinite(fadeTime, minFadeTime, {
+					errorMessage: 'Invalid fadeTime'
+				});
 
-                // Tính PsychoacousticWeight
-                const computePsychoacousticWeight = () => {
-                    try {
-                        const fftSize = this._analyser?.fftSize || 2048;
-                        const psychoacousticWeight = new Float32Array(fftSize / 2);
-                        const freqStep = this.context.sampleRate / fftSize;
-                        const fletcherMunson = (freq) => {
-                            if (freq < 20 || freq > 20000) return 0.1;
-                            if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                            if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                            return 1.0 - 0.00005 * (freq - 4000);
-                        };
-                        for (let i = 0; i < fftSize / 2; i++) {
-                            const freq = i * freqStep;
-                            const maskingThreshold = Math.pow(10, -60 / 20) * fletcherMunson(freq);
-                            const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                            psychoacousticWeight[i] = ensureFinite(maskingThreshold * perceptualSensitivity, 1.0);
-                        }
-                        return psychoacousticWeight;
-                    } catch (error) {
-                        handleError('PsychoacousticWeight computation failed', error, { fftSize: this._analyser?.fftSize }, 'low', { memoryManager });
-                        return new Float32Array(this._analyser?.fftSize / 2 || 1024).fill(1.0);
-                    }
-                };
+				// Tính bufferTime
+				const bufferTime = ensureFinite(
+					this.calculateBufferTime?.(spectralComplexity, transientEnergy, vocalPresence) || 0.2,
+					0.2, {
+						errorMessage: 'Invalid bufferTime'
+					}
+				);
 
-                // Tính EmotionTimbreMap
-                const computeEmotionTimbreMap = () => {
-                    try {
-                        const fftSize = this._analyser?.fftSize || 2048;
-                        const timbreCurve = new Float32Array(fftSize / 2);
-                        const freqStep = this.context.sampleRate / fftSize;
-                        const splinePoints = {
-                            warm: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 0.9] },
-                            bright: { freq: [1000, 4000, 8000], gain: [0.9, 1.0, 1.2] },
-                            bassHeavy: { freq: [50, 100, 200], gain: [1.3, 1.2, 1.0] },
-                            vocal: { freq: [200, 1000, 2000], gain: [1.0, 1.2, 1.1] },
-                            proNatural: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] },
-                            karaokeDynamic: { freq: [200, 1000, 2000], gain: [1.1, 1.3, 1.1] },
-                            rockMetal: { freq: [100, 4000, 8000], gain: [1.2, 1.0, 1.15] },
-                            smartStudio: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.05] },
-                            neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                        };
-                        const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                        for (let i = 0; i < fftSize / 2; i++) {
-                            const freq = i * freqStep;
-                            let gain = 1.0;
-                            for (let j = 1; j < profilePoints.freq.length; j++) {
-                                if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                                    const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                                    gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                                }
-                            }
-                            timbreCurve[i] = ensureFinite(gain * deviceAdaptFactor, 1.0);
-                        }
-                        return timbreCurve;
-                    } catch (error) {
-                        handleError('EmotionTimbreMap computation failed', error, { fftSize: this._analyser?.fftSize }, 'low', { memoryManager });
-                        return new Float32Array(this._analyser?.fftSize / 2 || 1024).fill(1.0);
-                    }
-                };
+				// Các tham số khác
+				const fadeType = 'bezier';
+				const smoothnessBase = spectralComplexity > 0.7 ? 2.2 : 1.9;
+				const smoothness = ensureFinite(
+					smoothnessBase * (noiseLevel > 0.7 ? 1.1 : 1.0) * cpuLoadAdjust,
+					1.9, {
+						errorMessage: 'Invalid smoothness'
+					}
+				);
+				const vibranceBase = harmonicComplexity > 1.0 ? 0.95 : 0.85;
+				const vibrance = ensureFinite(
+					vibranceBase * (qualityPrediction > 0.7 ? 1.05 : 1.0) * cpuLoadAdjust,
+					0.85, {
+						errorMessage: 'Invalid vibrance'
+					}
+				);
 
-                const spectralAttention = computeSpectralAttention();
-                const psychoacousticWeight = computePsychoacousticWeight();
-                const timbreCurve = computeEmotionTimbreMap();
+				// Kết quả
+				const result = {
+					fadeTime,
+					bufferTime,
+					fadeType,
+					smoothness,
+					vibrance,
+					spectralComplexity,
+					transientEnergy,
+					vocalPresence,
+					harmonicComplexity
+				};
 
-                // Tính fadeTime với HiFi AT2030
-                const minFadeTime = 0.005;
-                const baseFadeTime = 0.4 * (vocalPresence > 0.7 ? 1.4 : 1.0);
-                const noiseAdjust = noiseLevel > 0.7 ? 1.2 : 1.0;
-                const qualityAdjust = qualityPrediction > 0.7 ? 1.1 : 1.0;
-                const profileAdjust = {
-                    warm: 1.1,
-                    bright: 0.9,
-                    bassHeavy: 1.2,
-                    vocal: 1.3,
-                    proNatural: 1.0,
-                    karaokeDynamic: 1.3,
-                    rockMetal: 1.2,
-                    smartStudio: 1.1
-                }[profile] || 1.0;
-                let fadeTime = Math.max(minFadeTime, baseFadeTime * (
-                    1.0 + 
-                    0.3 * spectralComplexity + 
-                    0.2 * transientEnergy + 
-                    0.3 * vocalPresence + 
-                    0.1 * (spectralProfile.spectralFlux || 0.5)
-                ) * noiseAdjust * qualityAdjust * profileAdjust * deviceAdaptFactor);
-                fadeTime = ensureFinite(fadeTime, minFadeTime, {
-                    errorMessage: 'Invalid fadeTime'
-                });
+				// Lưu vào MemoryManager
+				if (memoryManager && typeof memoryManager.set === 'function') {
+					try {
+						const cacheKey = `contextAnalysis_${simpleHash(context)}`;
+						memoryManager.set(cacheKey, result, 'normal', {
+							timestamp: Date.now()
+						});
+						let analysisHistory = memoryManager.get('analysisHistory') || [];
+						analysisHistory.push({
+							...result,
+							timestamp: Date.now()
+						});
+						analysisHistory = analysisHistory.slice(-10); // Giới hạn 10
+						memoryManager.set('analysisHistory', analysisHistory, 'low');
+						if (isDebug) console.debug(`Stored analysis for key: ${cacheKey}`, result);
+					} catch (error) {
+						handleError('Failed to store analysis', error, {
+							context,
+							result
+						}, 'low', {
+							memoryManager
+						});
+					}
+				}
 
-                // Tính bufferTime với HiFi AT2030
-                const bufferTime = ensureFinite(
-                    this.calculateBufferTime?.(spectralComplexity, transientEnergy, vocalPresence, { profile, listenerProfile }) || 0.2,
-                    0.2, {
-                        errorMessage: 'Invalid bufferTime'
-                    }
-                );
+				// Debug log
+				if (isDebug) {
+					console.debug(`Context analysis result`, {
+						input: {
+							spectralProfile,
+							isVocal,
+							polyphonicPitchesLength: polyphonicPitches.length,
+							noiseLevel,
+							qualityPrediction,
+							cpuLoad,
+							isLowPowerDevice
+						},
+						output: result
+					});
+				}
 
-                // Tính smoothness và vibrance với HiFi AT2030
-                const smoothnessBase = spectralComplexity > 0.7 ? 2.2 : 1.9;
-                const profileSmoothnessAdjust = {
-                    warm: 1.2,
-                    bright: 0.8,
-                    bassHeavy: 1.1,
-                    vocal: 1.0,
-                    proNatural: 1.0,
-                    karaokeDynamic: 1.0,
-                    rockMetal: 0.9,
-                    smartStudio: 1.0
-                }[profile] || 1.0;
-                const smoothness = ensureFinite(
-                    smoothnessBase * (noiseLevel > 0.7 ? 1.1 : 1.0) * profileSmoothnessAdjust * deviceAdaptFactor,
-                    1.9, {
-                        errorMessage: 'Invalid smoothness'
-                    }
-                );
-                const vibranceBase = harmonicComplexity > 1.0 ? 0.95 : 0.85;
-                const profileVibranceAdjust = {
-                    warm: 0.9,
-                    bright: 1.2,
-                    bassHeavy: 1.0,
-                    vocal: 1.1,
-                    proNatural: 1.0,
-                    karaokeDynamic: 1.2,
-                    rockMetal: 1.1,
-                    smartStudio: 1.1
-                }[profile] || 1.0;
-                const vibrance = ensureFinite(
-                    vibranceBase * (qualityPrediction > 0.7 ? 1.05 : 1.0) * profileVibranceAdjust * deviceAdaptFactor,
-                    0.85, {
-                        errorMessage: 'Invalid vibrance'
-                    }
-                );
-
-                // Kết quả
-                const result = {
-                    fadeTime,
-                    bufferTime,
-                    fadeType: 'bezier',
-                    smoothness,
-                    vibrance,
-                    spectralComplexity,
-                    transientEnergy,
-                    vocalPresence,
-                    harmonicComplexity,
-                    spectralAttention: spectralAttention.slice(0, 10), // Lưu mẫu
-                    psychoacousticWeight: psychoacousticWeight.slice(0, 10), // Lưu mẫu
-                    timbreCurve: timbreCurve.slice(0, 10) // Lưu mẫu
-                };
-
-                // Lưu vào MemoryManager
-                if (memoryManager && typeof memoryManager.set === 'function') {
-                    try {
-                        const cacheKey = `contextAnalysis_${simpleHash({ ...context, listenerProfile })}`;
-                        memoryManager.set(cacheKey, result, 'normal', {
-                            timestamp: Date.now()
-                        });
-                        let analysisHistory = memoryManager.get('analysisHistory') || [];
-                        analysisHistory.push({
-                            ...result,
-                            timestamp: Date.now()
-                        });
-                        analysisHistory = analysisHistory.slice(-10); // Giới hạn 10
-                        memoryManager.set('analysisHistory', analysisHistory, 'low');
-                        if (isDebug) console.debug(`Stored analysis for key: ${cacheKey}`, result);
-                    } catch (error) {
-                        handleError('Failed to store analysis', error, {
-                            context,
-                            result
-                        }, 'low', {
-                            memoryManager
-                        });
-                    }
-                }
-
-                // Debug log
-                if (isDebug) {
-                    console.debug(`Context analysis result`, {
-                        input: {
-                            spectralProfile,
-                            isVocal,
-                            polyphonicPitchesLength: polyphonicPitches.length,
-                            noiseLevel,
-                            qualityPrediction,
-                            cpuLoad,
-                            isLowPowerDevice,
-                            profile,
-                            listenerProfile
-                        },
-                        output: result
-                    });
-                }
-
-                return result;
-            } catch (error) {
-                handleError('Error analyzing context', error, {
-                    context
-                }, 'high', {
-                    memoryManager
-                });
-                return null;
-            }
-        }
-    };
+				return result;
+			} catch (error) {
+				handleError('Error analyzing context', error, {
+					context
+				}, 'high', {
+					memoryManager
+				});
+				return null;
+			}
+		}
+	};
 };
 
 // Helper function to calculate bufferTime based on qualityMode and context
 Jungle.prototype.calculateBufferTime = function(spectralComplexity, transientEnergy, vocalPresence, options = {}) {
-    try {
-        // Chuẩn hóa đầu vào
-        spectralComplexity = ensureFinite(spectralComplexity, 0.5, {
-            errorMessage: 'Invalid spectralComplexity, using default: 0.5'
-        });
-        transientEnergy = ensureFinite(transientEnergy, 0.5, {
-            errorMessage: 'Invalid transientEnergy, using default: 0.5'
-        });
-        vocalPresence = ensureFinite(vocalPresence, 0.5, {
-            errorMessage: 'Invalid vocalPresence, using default: 0.5'
-        });
-        const currentPitchMult = ensureFinite(this.currentPitchMult, 0, {
-            errorMessage: 'Invalid currentPitchMult, using default: 0'
-        });
+	try {
+		// Chuẩn hóa đầu vào
+		spectralComplexity = ensureFinite(spectralComplexity, 0.5, {
+			errorMessage: 'Invalid spectralComplexity, using default: 0.5'
+		});
+		transientEnergy = ensureFinite(transientEnergy, 0.5, {
+			errorMessage: 'Invalid transientEnergy, using default: 0.5'
+		});
+		vocalPresence = ensureFinite(vocalPresence, 0.5, {
+			errorMessage: 'Invalid vocalPresence, using default: 0.5'
+		});
+		const currentPitchMult = ensureFinite(this.currentPitchMult, 0, {
+			errorMessage: 'Invalid currentPitchMult, using default: 0'
+		});
 
-        // Chuẩn hóa options
-        const defaultOptions = {
-            spectralWeight: 0.2,
-            transientWeight: 0.3,
-            vocalWeight: 0.2,
-            pitchThreshold: 0.3,
-            pitchFactor: 1.5,
-            minBufferTime: 0.1,
-            maxBufferTime: 2.0,
-            profile: 'smartStudio',
-            listenerProfile: 'standard'
-        };
-        const validatedOptions = {
-            spectralWeight: ensureFinite(options.spectralWeight, defaultOptions.spectralWeight, {
-                errorMessage: 'Invalid spectralWeight'
-            }),
-            transientWeight: ensureFinite(options.transientWeight, defaultOptions.transientWeight, {
-                errorMessage: 'Invalid transientWeight'
-            }),
-            vocalWeight: ensureFinite(options.vocalWeight, defaultOptions.vocalWeight, {
-                errorMessage: 'Invalid vocalWeight'
-            }),
-            pitchThreshold: ensureFinite(options.pitchThreshold, defaultOptions.pitchThreshold, {
-                errorMessage: 'Invalid pitchThreshold'
-            }),
-            pitchFactor: ensureFinite(options.pitchFactor, defaultOptions.pitchFactor, {
-                errorMessage: 'Invalid pitchFactor'
-            }),
-            minBufferTime: ensureFinite(options.minBufferTime, defaultOptions.minBufferTime, {
-                errorMessage: 'Invalid minBufferTime'
-            }),
-            maxBufferTime: ensureFinite(options.maxBufferTime, defaultOptions.maxBufferTime, {
-                errorMessage: 'Invalid maxBufferTime'
-            }),
-            profile: options.profile || defaultOptions.profile,
-            listenerProfile: options.listenerProfile || defaultOptions.listenerProfile
-        };
+		// Chuẩn hóa options
+		const defaultOptions = {
+			spectralWeight: 0.2,
+			transientWeight: 0.3,
+			vocalWeight: 0.2,
+			pitchThreshold: 0.3,
+			pitchFactor: 1.5,
+			minBufferTime: 0.1,
+			maxBufferTime: 2.0
+		};
+		const validatedOptions = {
+			spectralWeight: ensureFinite(options.spectralWeight, defaultOptions.spectralWeight, {
+				errorMessage: 'Invalid spectralWeight'
+			}),
+			transientWeight: ensureFinite(options.transientWeight, defaultOptions.transientWeight, {
+				errorMessage: 'Invalid transientWeight'
+			}),
+			vocalWeight: ensureFinite(options.vocalWeight, defaultOptions.vocalWeight, {
+				errorMessage: 'Invalid vocalWeight'
+			}),
+			pitchThreshold: ensureFinite(options.pitchThreshold, defaultOptions.pitchThreshold, {
+				errorMessage: 'Invalid pitchThreshold'
+			}),
+			pitchFactor: ensureFinite(options.pitchFactor, defaultOptions.pitchFactor, {
+				errorMessage: 'Invalid pitchFactor'
+			}),
+			minBufferTime: ensureFinite(options.minBufferTime, defaultOptions.minBufferTime, {
+				errorMessage: 'Invalid minBufferTime'
+			}),
+			maxBufferTime: ensureFinite(options.maxBufferTime, defaultOptions.maxBufferTime, {
+				errorMessage: 'Invalid maxBufferTime'
+			})
+		};
 
-        // Kiểm tra CPU load
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // AT2030 DeviceAdaptFactor
+		// Kiểm tra CPU load
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+		const cpuLoadAdjust = cpuLoad > 0.9 || isLowPowerDevice ? 0.85 : 1.0;
 
-        // Tính baseBufferTime
-        const baseBufferTime = this.qualityMode === 'high' ? 0.8 : 0.4;
+		// Tính baseBufferTime
+		const baseBufferTime = this.qualityMode === 'high' ? 0.8 : 0.4;
 
-        // Tính pitchAdjust
-        const pitchAdjust = Math.abs(currentPitchMult) > validatedOptions.pitchThreshold ?
-            validatedOptions.pitchFactor :
-            1.0;
+		// Tính pitchAdjust
+		const pitchAdjust = Math.abs(currentPitchMult) > validatedOptions.pitchThreshold ?
+			validatedOptions.pitchFactor :
+			1.0;
 
-        // Điều chỉnh theo profile và listenerProfile
-        const profileBufferAdjust = {
-            warm: 1.2,
-            bright: 0.9,
-            bassHeavy: 1.3,
-            vocal: 1.4,
-            proNatural: 1.0,
-            karaokeDynamic: 1.4,
-            rockMetal: 1.2,
-            smartStudio: 1.1
-        }[validatedOptions.profile] || 1.0;
-        const listenerBufferAdjust = validatedOptions.listenerProfile === 'audiophile' ? 1.1 :
-            validatedOptions.listenerProfile === 'casual' ? 0.9 : 1.0;
+		// Tính bufferTime
+		let bufferTime = baseBufferTime * (
+			1.0 +
+			validatedOptions.spectralWeight * spectralComplexity +
+			validatedOptions.transientWeight * transientEnergy +
+			validatedOptions.vocalWeight * vocalPresence
+		) * pitchAdjust * cpuLoadAdjust;
 
-        // Tính bufferTime với HiFi AT2030
-        let bufferTime = baseBufferTime * (
-            1.0 +
-            validatedOptions.spectralWeight * spectralComplexity +
-            validatedOptions.transientWeight * transientEnergy +
-            validatedOptions.vocalWeight * vocalPresence
-        ) * pitchAdjust * profileBufferAdjust * listenerBufferAdjust * deviceAdaptFactor;
+		// Giới hạn bufferTime
+		bufferTime = Math.max(validatedOptions.minBufferTime, Math.min(validatedOptions.maxBufferTime, bufferTime));
+		bufferTime = ensureFinite(bufferTime, validatedOptions.minBufferTime, {
+			errorMessage: 'Invalid bufferTime'
+		});
 
-        // Giới hạn bufferTime
-        bufferTime = Math.max(validatedOptions.minBufferTime, Math.min(validatedOptions.maxBufferTime, bufferTime));
-        bufferTime = ensureFinite(bufferTime, validatedOptions.minBufferTime, {
-            errorMessage: 'Invalid bufferTime'
-        });
+		// Debug log
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		if (isDebug) {
+			console.debug(`Calculated bufferTime`, {
+				input: {
+					spectralComplexity,
+					transientEnergy,
+					vocalPresence,
+					currentPitchMult,
+					qualityMode: this.qualityMode,
+					cpuLoad,
+					isLowPowerDevice
+				},
+				options: validatedOptions,
+				output: bufferTime
+			});
+		}
 
-        // Debug log
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (isDebug) {
-            console.debug(`Calculated bufferTime`, {
-                input: {
-                    spectralComplexity,
-                    transientEnergy,
-                    vocalPresence,
-                    currentPitchMult,
-                    qualityMode: this.qualityMode,
-                    cpuLoad,
-                    isLowPowerDevice,
-                    profile: validatedOptions.profile,
-                    listenerProfile: validatedOptions.listenerProfile
-                },
-                options: validatedOptions,
-                output: bufferTime
-            });
-        }
-
-        return bufferTime;
-    } catch (error) {
-        handleError('Error calculating bufferTime', error, {
-            spectralComplexity,
-            transientEnergy,
-            vocalPresence,
-            qualityMode: this.qualityMode,
-            profile: options.profile,
-            listenerProfile: options.listenerProfile
-        }, 'high', {
-            memoryManager: options.memoryManager
-        });
-        return options.minBufferTime || 0.1; // Fallback
-    }
+		return bufferTime;
+	} catch (error) {
+		handleError('Error calculating bufferTime', error, {
+			spectralComplexity,
+			transientEnergy,
+			vocalPresence,
+			qualityMode: this.qualityMode
+		}, 'high', {
+			memoryManager: options.memoryManager
+		});
+		return options.minBufferTime || 0.1; // Fallback
+	}
 };
 
+/**
+ * Simple hash function for context object to generate cache key
+ * @param {Object} obj - Context object
+ * @returns {string} Hash string
+ */
+function simpleHash(obj) {
+	const str = JSON.stringify({
+		spectralProfile: {
+			...obj.spectralProfile,
+			chroma: obj.spectralProfile?.chroma // Bao gồm chroma trong hash
+		},
+		tempoMemory: obj.tempoMemory,
+		currentGenre: obj.currentGenre,
+		polyphonicPitchesLength: obj.polyphonicPitches?.length
+	});
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		hash = ((hash << 5) - hash) + str.charCodeAt(i);
+		hash |= 0; // Convert to 32-bit integer
+	}
+	return hash.toString(36);
+}
+
 Jungle.prototype.analyzeSongStructure = function({
-    spectralProfile,
-    tempoMemory,
-    polyphonicPitches,
-    currentGenre
+	spectralProfile,
+	tempoMemory,
+	polyphonicPitches,
+	currentGenre
 }) {
-    // Chuẩn hóa đầu vào
-    const spectral = spectralProfile || {
-        subBass: 0.5,
-        bass: 0.5,
-        subMid: 0.5,
-        midLow: 0.5,
-        midHigh: 0.5,
-        high: 0.5,
-        subTreble: 0.5,
-        air: 0.5,
-        transientEnergy: 0.5,
-        instruments: {},
-        spectralFlux: 0.5,
-        spectralEntropy: 0.5,
-        harmonicRatio: 0.5,
-        chroma: Array(12).fill(0.5)
-    };
-    const validatedSpectral = {
-        subBass: ensureFinite(spectral.subBass, 0.5, { errorMessage: 'Invalid subBass' }),
-        bass: ensureFinite(spectral.bass, 0.5, { errorMessage: 'Invalid bass' }),
-        subMid: ensureFinite(spectral.subMid, 0.5, { errorMessage: 'Invalid subMid' }),
-        midLow: ensureFinite(spectral.midLow, 0.5, { errorMessage: 'Invalid midLow' }),
-        midHigh: ensureFinite(spectral.midHigh, 0.5, { errorMessage: 'Invalid midHigh' }),
-        high: ensureFinite(spectral.high, 0.5, { errorMessage: 'Invalid high' }),
-        subTreble: ensureFinite(spectral.subTreble, 0.5, { errorMessage: 'Invalid subTreble' }),
-        air: ensureFinite(spectral.air, 0.5, { errorMessage: 'Invalid air' }),
-        transientEnergy: ensureFinite(spectral.transientEnergy, 0.5, { errorMessage: 'Invalid transientEnergy' }),
-        instruments: typeof spectral.instruments === 'object' ? spectral.instruments : {},
-        spectralFlux: ensureFinite(spectral.spectralFlux, 0.5, { errorMessage: 'Invalid spectralFlux' }),
-        spectralEntropy: ensureFinite(spectral.spectralEntropy, 0.5, { errorMessage: 'Invalid spectralEntropy' }),
-        harmonicRatio: ensureFinite(spectral.harmonicRatio, 0.5, { errorMessage: 'Invalid harmonicRatio' }),
-        chroma: Array.isArray(spectral.chroma) && spectral.chroma.length === 12 ?
-            spectral.chroma.map(v => ensureFinite(v, 0.5, { errorMessage: 'Invalid chroma value' })) :
-            Array(12).fill(0.5)
-    };
-    const validatedTempoMemory = tempoMemory || {
-        current: 120,
-        previous: 120
-    };
-    const validatedPolyphonicPitches = Array.isArray(polyphonicPitches) ? polyphonicPitches : [];
-    const validatedCurrentGenre = typeof currentGenre === 'string' ? currentGenre.toLowerCase() : 'unknown';
-    const listenerProfile = this.listenerProfile || 'standard'; // standard, audiophile, casual
+	// Chuẩn hóa đầu vào
+	const spectral = spectralProfile || {
+		subBass: 0.5,
+		bass: 0.5,
+		subMid: 0.5,
+		midLow: 0.5,
+		midHigh: 0.5,
+		high: 0.5,
+		subTreble: 0.5,
+		air: 0.5,
+		transientEnergy: 0.5,
+		instruments: {},
+		spectralFlux: 0.5,
+		spectralEntropy: 0.5,
+		harmonicRatio: 0.5,
+		chroma: Array(12).fill(0.5) // Mặc định chroma: 12 lớp âm sắc
+	};
+	const validatedSpectral = {
+		subBass: ensureFinite(spectral.subBass, 0.5, {
+			errorMessage: 'Invalid subBass'
+		}),
+		bass: ensureFinite(spectral.bass, 0.5, {
+			errorMessage: 'Invalid bass'
+		}),
+		subMid: ensureFinite(spectral.subMid, 0.5, {
+			errorMessage: 'Invalid subMid'
+		}),
+		midLow: ensureFinite(spectral.midLow, 0.5, {
+			errorMessage: 'Invalid midLow'
+		}),
+		midHigh: ensureFinite(spectral.midHigh, 0.5, {
+			errorMessage: 'Invalid midHigh'
+		}),
+		high: ensureFinite(spectral.high, 0.5, {
+			errorMessage: 'Invalid high'
+		}),
+		subTreble: ensureFinite(spectral.subTreble, 0.5, {
+			errorMessage: 'Invalid subTreble'
+		}),
+		air: ensureFinite(spectral.air, 0.5, {
+			errorMessage: 'Invalid air'
+		}),
+		transientEnergy: ensureFinite(spectral.transientEnergy, 0.5, {
+			errorMessage: 'Invalid transientEnergy'
+		}),
+		instruments: typeof spectral.instruments === 'object' ? spectral.instruments : {},
+		spectralFlux: ensureFinite(spectral.spectralFlux, 0.5, {
+			errorMessage: 'Invalid spectralFlux'
+		}),
+		spectralEntropy: ensureFinite(spectral.spectralEntropy, 0.5, {
+			errorMessage: 'Invalid spectralEntropy'
+		}),
+		harmonicRatio: ensureFinite(spectral.harmonicRatio, 0.5, {
+			errorMessage: 'Invalid harmonicRatio'
+		}),
+		chroma: Array.isArray(spectral.chroma) && spectral.chroma.length === 12 ?
+			spectral.chroma.map(v => ensureFinite(v, 0.5, {
+				errorMessage: 'Invalid chroma value'
+			})) :
+			Array(12).fill(0.5)
+	};
+	const validatedTempoMemory = tempoMemory || {
+		current: 120,
+		previous: 120
+	};
+	const validatedPolyphonicPitches = Array.isArray(polyphonicPitches) ? polyphonicPitches : [];
+	const validatedCurrentGenre = typeof currentGenre === 'string' ? currentGenre.toLowerCase() : 'unknown';
 
-    try {
-        // Kiểm tra CPU load
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const deviceAdaptFactor = Math.max(0.75, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2)));
+	try {
+		// Kiểm tra CPU load
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+		const cpuLoadAdjust = cpuLoad > 0.9 || isLowPowerDevice ? 0.85 : 1.0;
 
-        // Lấy FFT analysis
-        const fftAnalysis = this._analyser && typeof this.getFFTAnalysis === 'function' ? this.getFFTAnalysis() : null;
+		// Lấy cache từ MemoryManager
+		const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+		const cacheKey = `songStructure_${simpleHash({ spectralProfile, tempoMemory, polyphonicPitches, currentGenre })}`;
+		if (this.memoryManager && typeof this.memoryManager.get === 'function') {
+			const cachedStructure = this.memoryManager.get(cacheKey);
+			if (cachedStructure && cachedStructure.metadata?.timestamp > Date.now() - 1000 && cachedStructure.metadata?.expiry > Date.now()) {
+				if (isDebug) console.debug(`Using cached song structure for key: ${cacheKey}`, cachedStructure);
+				return cachedStructure;
+			}
+		}
 
-        // Cải thiện hash để tránh xung đột
-        const cacheKey = `songStructure_${simpleHash({
-            spectralProfile: JSON.stringify(validatedSpectral),
-            tempoMemory: JSON.stringify(validatedTempoMemory),
-            polyphonicPitches: JSON.stringify(validatedPolyphonicPitches),
-            currentGenre: validatedCurrentGenre
-        })}`;
+		// Kiểm tra đầu vào giống lần trước
+		const lastInputHash = this.memoryManager?.get('lastInputHash');
+		const currentInputHash = simpleHash({
+			spectralProfile,
+			tempoMemory,
+			polyphonicPitches,
+			currentGenre
+		});
+		if (lastInputHash === currentInputHash && this.memoryManager?.get('lastStructure')) {
+			const lastStructure = this.memoryManager.get('lastStructure');
+			if (isDebug) console.debug(`Reusing last structure due to similar input`, lastStructure);
+			return lastStructure;
+		}
 
-        // Lấy cache từ MemoryManager
-        const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
-        if (this.memoryManager && typeof this.memoryManager.get === 'function') {
-            const cachedStructure = this.memoryManager.get(cacheKey);
-            if (cachedStructure && cachedStructure.metadata?.timestamp > Date.now() - 1000 && cachedStructure.metadata?.expiry > Date.now()) {
-                if (isDebug) console.debug(`Using cached song structure for key: ${cacheKey}`, cachedStructure);
-                return cachedStructure;
-            }
-        }
+		// Tính toán metrics
+		const tempoChange = validatedTempoMemory.current && validatedTempoMemory.previous ?
+			Math.abs(ensureFinite(validatedTempoMemory.current, 120) - ensureFinite(validatedTempoMemory.previous, 120)) / ensureFinite(validatedTempoMemory.previous, 120) :
+			0;
+		const energy = (
+			validatedSpectral.subBass + validatedSpectral.bass + validatedSpectral.subMid +
+			validatedSpectral.midLow + validatedSpectral.midHigh + validatedSpectral.high
+		) / 6;
+		const energyChange = this.memoryManager?.get('lastEnergy') ?
+			Math.abs(energy - ensureFinite(this.memoryManager.get('lastEnergy'), 0.5)) / (ensureFinite(this.memoryManager.get('lastEnergy'), 0.5) || 1) :
+			0;
+		const transientDensity = validatedSpectral.transientEnergy;
+		const instrumentPresence = Object.values(validatedSpectral.instruments).reduce((sum, val) => sum + ensureFinite(val, 0), 0) /
+			(Object.keys(validatedSpectral.instruments).length || 1);
+		const spectralFlux = validatedSpectral.spectralFlux;
+		const spectralEntropy = validatedSpectral.spectralEntropy;
+		const harmonicRatio = validatedSpectral.harmonicRatio;
 
-        // Kiểm tra đầu vào giống lần trước
-        const lastInputHash = this.memoryManager?.get('lastInputHash');
-        const currentInputHash = simpleHash({
-            spectralProfile: JSON.stringify(validatedSpectral),
-            tempoMemory: JSON.stringify(validatedTempoMemory),
-            polyphonicPitches: JSON.stringify(validatedPolyphonicPitches),
-            currentGenre: validatedCurrentGenre
-        });
-        if (lastInputHash === currentInputHash && this.memoryManager?.get('lastStructure')) {
-            const lastStructure = this.memoryManager.get('lastStructure');
-            if (isDebug) console.debug(`Reusing last structure due to similar input`, lastStructure);
-            return lastStructure;
-        }
+		// Tính chroma metrics
+		const chromaPresence = validatedSpectral.chroma.reduce((sum, val) => sum + val, 0) / 12; // Trung bình năng lượng chroma
+		const lastChroma = this.memoryManager?.get('lastChroma') || Array(12).fill(0.5);
+		const chromaFlux = validatedSpectral.chroma.reduce((sum, val, i) => sum + Math.abs(val - lastChroma[i]), 0) / 12; // Biến động chroma
 
-        // Tính toán metrics
-        const tempoChange = validatedTempoMemory.current && validatedTempoMemory.previous ?
-            Math.abs(ensureFinite(validatedTempoMemory.current, 120) - ensureFinite(validatedTempoMemory.previous, 120)) / ensureFinite(validatedTempoMemory.previous, 120) :
-            0;
-        const energy = (
-            validatedSpectral.subBass + validatedSpectral.bass + validatedSpectral.subMid +
-            validatedSpectral.midLow + validatedSpectral.midHigh + validatedSpectral.high
-        ) / 6;
-        const energyChange = this.memoryManager?.get('lastEnergy') ?
-            Math.abs(energy - ensureFinite(this.memoryManager.get('lastEnergy'), 0.5)) / (ensureFinite(this.memoryManager.get('lastEnergy'), 0.5) || 1) :
-            0;
-        const transientDensity = validatedSpectral.transientEnergy;
-        const instrumentPresence = Object.values(validatedSpectral.instruments).reduce((sum, val) => sum + ensureFinite(val, 0), 0) /
-            (Object.keys(validatedSpectral.instruments).length || 1);
-        const spectralFlux = validatedSpectral.spectralFlux;
-        const spectralEntropy = validatedSpectral.spectralEntropy;
-        const harmonicRatio = validatedSpectral.harmonicRatio;
+		// Điều chỉnh theo genre và pitches
+		const genreAdjust = validatedCurrentGenre.includes('edm') || validatedCurrentGenre.includes('pop') ? 1.2 : validatedCurrentGenre.includes('classical') ? 0.8 : 1.0;
+		const pitchAdjust = validatedPolyphonicPitches.length > 2 ? 1.2 : validatedPolyphonicPitches.length === 0 ? 0.8 : 1.0;
 
-        // Tính chroma metrics và key detection
-        const chromaPresence = validatedSpectral.chroma.reduce((sum, val) => sum + val, 0) / 12;
-        const lastChroma = this.memoryManager?.get('lastChroma') || Array(12).fill(0.5);
-        const chromaFlux = validatedSpectral.chroma.reduce((sum, val, i) => sum + Math.abs(val - lastChroma[i]), 0) / 12;
-        const keyStrength = Math.max(...validatedSpectral.chroma);
-        const keyIndex = validatedSpectral.chroma.indexOf(keyStrength);
-        const keyAdjust = keyStrength > 0.7 ? 1.2 : keyStrength < 0.3 ? 0.8 : 1.0;
+		// Thuật toán thông minh (Decision Tree-like)
+		let section = 'verse';
+		let structureFactor = 1.0;
+		let confidence = 0.5;
 
-        // Tính formant scale từ polyphonicPitches
-        const formantScale = validatedPolyphonicPitches.length > 0 ?
-            1.0 + (Math.max(...validatedPolyphonicPitches.map(p => ensureFinite(p, 440)) - 440) / 440 * 0.1) :
-            1.0;
+		// Tính điểm cho mỗi section
+		const scores = {
+			chorus: 0,
+			intro: 0,
+			bridge: 0,
+			verse: 0
+		};
 
-        // Thêm hàm tính SpectralAttention
-        const computeSpectralAttention = () => {
-            try {
-                const fftSize = fftAnalysis?.fftSize || 2048;
-                const spectralAttention = new Float32Array(fftSize / 2);
-                let sumExp = 0;
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const energy = fftAnalysis?.magnitudes ? fftAnalysis.magnitudes[i] * fftAnalysis.magnitudes[i] : 0.5;
-                    spectralAttention[i] = Math.exp(energy * validatedSpectral.spectralFlux);
-                    sumExp += spectralAttention[i];
-                }
-                for (let i = 0; i < fftSize / 2; i++) {
-                    spectralAttention[i] = ensureFinite(spectralAttention[i] / (sumExp + 1e-10), 1.0);
-                }
-                if (validatedSpectral.midLow > 0.6 || validatedSpectral.midHigh > 0.6) {
-                    for (let i = Math.floor(200 * fftSize / this.context.sampleRate); i < Math.floor(2000 * fftSize / this.context.sampleRate); i++) {
-                        spectralAttention[i] *= 1.2;
-                    }
-                }
-                if (validatedSpectral.transientEnergy > 0.8) {
-                    for (let i = 0; i < Math.floor(100 * fftSize / this.context.sampleRate); i++) {
-                        spectralAttention[i] *= 1.15;
-                    }
-                }
-                return spectralAttention;
-            } catch (error) {
-                handleError('SpectralAttention computation failed', error, { fftSize: fftAnalysis?.fftSize });
-                return new Float32Array(fftAnalysis?.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		// Quy tắc động (giữ nguyên và thêm chroma)
+		scores.chorus += energyChange * 2.0 * genreAdjust;
+		scores.chorus += transientDensity * 1.5 * genreAdjust;
+		scores.chorus += tempoChange * 1.0 * genreAdjust;
+		scores.chorus += spectralFlux * 1.2;
+		scores.chorus += instrumentPresence * 1.0 * genreAdjust;
+		scores.chorus += chromaPresence * 1.5 * genreAdjust; // Nhiều lớp âm sắc
+		scores.chorus += chromaFlux * 1.2; // Biến động chroma cao
 
-        // Thêm hàm tính PsychoacousticWeight
-        const computePsychoacousticWeight = () => {
-            try {
-                const fftSize = fftAnalysis?.fftSize || 2048;
-                const psychoacousticWeight = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    const maskingThreshold = Math.pow(10, -60 / 20) * fletcherMunson(freq);
-                    const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                    psychoacousticWeight[i] = ensureFinite(maskingThreshold * perceptualSensitivity, 1.0);
-                }
-                return psychoacousticWeight;
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { fftSize: fftAnalysis?.fftSize });
-                return new Float32Array(fftAnalysis?.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		scores.intro += (1 - energy) * 2.0 / genreAdjust;
+		scores.intro += (1 - instrumentPresence) * 1.5 / genreAdjust;
+		scores.intro += (1 - spectralFlux) * 1.2;
+		scores.intro += (1 - transientDensity) * 1.0 / genreAdjust;
+		scores.intro += (1 - chromaPresence) * 1.5 / genreAdjust; // Ít lớp âm sắc
+		scores.intro += (1 - chromaFlux) * 1.2; // Biến động chroma thấp
 
-        // Thêm hàm tính EmotionTimbreMap
-        const computeEmotionTimbreMap = (section) => {
-            try {
-                const fftSize = fftAnalysis?.fftSize || 2048;
-                const timbreCurve = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const splinePoints = {
-                    chorus: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 1.0] },
-                    intro: { freq: [100, 1000, 4000], gain: [0.8, 0.9, 0.8] },
-                    bridge: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.0] },
-                    verse: { freq: [200, 1000, 2000], gain: [1.0, 1.0, 0.9] },
-                    neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[section] || splinePoints.neutral;
-                const emotionalVector = section === 'chorus' ? 1.15 : section === 'intro' ? 0.85 : 1.0;
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    let gain = 1.0;
-                    for (let j = 1; j < profilePoints.freq.length; j++) {
-                        if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                            const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                            gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                        }
-                    }
-                    timbreCurve[i] = ensureFinite(gain * emotionalVector, 1.0);
-                }
-                return timbreCurve;
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { fftSize: fftAnalysis?.fftSize });
-                return new Float32Array(fftAnalysis?.fftSize / 2 || 1024).fill(1.0);
-            }
-        };
+		scores.bridge += (1 - transientDensity) * 1.5 / genreAdjust;
+		scores.bridge += instrumentPresence * 1.2 * genreAdjust;
+		scores.bridge += harmonicRatio * 1.0;
+		scores.bridge += (1 - energyChange) * 1.0 / genreAdjust;
+		scores.bridge += chromaFlux * 1.5; // Biến động chroma trung bình/cao
+		scores.bridge += (1 - chromaPresence) * 1.0; // Trung bình lớp âm sắc
 
-        // Điều chỉnh theo genre và pitches
-        const genreAdjust = validatedCurrentGenre.includes('edm') || validatedCurrentGenre.includes('pop') ? 1.2 : validatedCurrentGenre.includes('classical') ? 0.8 : 1.0;
-        const pitchAdjust = validatedPolyphonicPitches.length > 2 ? 1.2 : validatedPolyphonicPitches.length === 0 ? 0.8 : 1.0;
+		scores.verse += (1 - Math.abs(energy - 0.5)) * 1.5;
+		scores.verse += (1 - Math.abs(transientDensity - 0.5)) * 1.2;
+		scores.verse += spectralEntropy * 1.0;
+		scores.verse += (1 - tempoChange) * 0.8;
+		scores.verse += (1 - Math.abs(chromaPresence - 0.5)) * 1.2; // Chroma trung bình
+		scores.verse += (1 - chromaFlux) * 1.0; // Biến động chroma thấp
 
-        // Thuật toán thông minh (Decision Tree cải tiến)
-        let section = 'verse';
-        let structureFactor = 1.0;
-        let confidence = 0.5;
-        const spectralAttention = computeSpectralAttention();
-        const psychoacousticWeight = computePsychoacousticWeight();
+		// Dự đoán từ lịch sử
+		const history = this.memoryManager?.get('songStructureHistory') || [];
+		const lastSection = history.length > 0 ? history[history.length - 1]?.section : null;
+		if (lastSection === 'chorus') scores.verse += 0.5;
+		if (lastSection === 'intro') scores.verse += 0.5;
+		if (lastSection === 'bridge') scores.chorus += 0.5;
 
-        // Tính điểm cho mỗi section
-        const scores = {
-            chorus: 0,
-            intro: 0,
-            bridge: 0,
-            verse: 0
-        };
+		// Chọn section có điểm cao nhất
+		const maxScore = Math.max(...Object.values(scores));
+		section = Object.keys(scores).find(key => scores[key] === maxScore) || 'verse';
+		confidence = maxScore / (maxScore + 1);
 
-        // Áp dụng HiFi AT2030 gain
-        const applyAT2030Gain = (baseScore, freqIdx) => {
-            const idx = Math.min(freqIdx, spectralAttention.length - 1);
-            return ensureFinite(
-                baseScore * deviceAdaptFactor * formantScale * spectralAttention[idx] * psychoacousticWeight[idx],
-                baseScore
-            );
-        };
+		// Gán structureFactor
+		const factorMap = {
+			chorus: 1.4,
+			intro: 0.8,
+			bridge: 1.2,
+			verse: 1.0
+		};
+		structureFactor = factorMap[section] * pitchAdjust * cpuLoadAdjust;
+		structureFactor = Math.max(0.5, Math.min(2.0, ensureFinite(structureFactor, 1.0, {
+			errorMessage: 'Invalid structureFactor'
+		})));
 
-        // Quy tắc động với HiFi AT2030
-        const freqIdxMap = {
-            subBass: Math.floor(50 * (fftAnalysis?.fftSize || 2048) / this.context.sampleRate),
-            mid: Math.floor(1000 * (fftAnalysis?.fftSize || 2048) / this.context.sampleRate),
-            high: Math.floor(4000 * (fftAnalysis?.fftSize || 2048) / this.context.sampleRate)
-        };
+		// Kết quả
+		const result = {
+			section,
+			structureFactor,
+			confidence
+		};
 
-        scores.chorus += applyAT2030Gain(energyChange * 2.0 * genreAdjust, freqIdxMap.high);
-        scores.chorus += applyAT2030Gain(transientDensity * 1.5 * genreAdjust, freqIdxMap.subBass);
-        scores.chorus += applyAT2030Gain(tempoChange * 1.0 * genreAdjust, freqIdxMap.mid);
-        scores.chorus += applyAT2030Gain(spectralFlux * 1.2, freqIdxMap.high);
-        scores.chorus += applyAT2030Gain(instrumentPresence * 1.0 * genreAdjust, freqIdxMap.mid);
-        scores.chorus += applyAT2030Gain(chromaPresence * 1.5 * genreAdjust * keyAdjust, freqIdxMap.mid);
-        scores.chorus += applyAT2030Gain(chromaFlux * 1.2, freqIdxMap.high);
+		// Lưu vào MemoryManager
+		if (this.memoryManager && typeof this.memoryManager.set === 'function') {
+			try {
+				// Lưu structure
+				this.memoryManager.set(cacheKey, result, 'high', {
+					timestamp: Date.now(),
+					expiry: Date.now() + 10000
+				});
+				this.memoryManager.set('lastStructure', result, 'high', {
+					timestamp: Date.now()
+				});
+				this.memoryManager.set('lastInputHash', currentInputHash, 'low', {
+					timestamp: Date.now()
+				});
+				this.memoryManager.set('lastChroma', validatedSpectral.chroma, 'low', {
+					timestamp: Date.now()
+				}); // Lưu chroma
 
-        scores.intro += applyAT2030Gain((1 - energy) * 2.0 / genreAdjust, freqIdxMap.subBass);
-        scores.intro += applyAT2030Gain((1 - instrumentPresence) * 1.5 / genreAdjust, freqIdxMap.mid);
-        scores.intro += applyAT2030Gain((1 - spectralFlux) * 1.2, freqIdxMap.high);
-        scores.intro += applyAT2030Gain((1 - transientDensity) * 1.0 / genreAdjust, freqIdxMap.subBass);
-        scores.intro += applyAT2030Gain((1 - chromaPresence) * 1.5 / genreAdjust, freqIdxMap.mid);
-        scores.intro += applyAT2030Gain((1 - chromaFlux) * 1.2, freqIdxMap.high);
+				// Lưu lịch sử
+				let history = this.memoryManager.get('songStructureHistory') || [];
+				history.push({
+					section,
+					structureFactor,
+					confidence,
+					timestamp: Date.now(),
+					chroma: validatedSpectral.chroma
+				});
+				history = history.slice(-50);
+				this.memoryManager.set('songStructureHistory', history, 'low', {
+					timestamp: Date.now()
+				});
 
-        scores.bridge += applyAT2030Gain((1 - transientDensity) * 1.5 / genreAdjust, freqIdxMap.subBass);
-        scores.bridge += applyAT2030Gain(instrumentPresence * 1.2 * genreAdjust, freqIdxMap.mid);
-        scores.bridge += applyAT2030Gain(harmonicRatio * 1.0, freqIdxMap.mid);
-        scores.bridge += applyAT2030Gain((1 - energyChange) * 1.0 / genreAdjust, freqIdxMap.high);
-        scores.bridge += applyAT2030Gain(chromaFlux * 1.5, freqIdxMap.high);
-        scores.bridge += applyAT2030Gain((1 - chromaPresence) * 1.0, freqIdxMap.mid);
+				this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
+				if (isDebug) console.debug(`Stored song structure for key: ${cacheKey}`, {
+					result,
+					historyLength: history.length,
+					chromaPresence,
+					chromaFlux
+				});
+			} catch (error) {
+				handleError('Failed to store song structure', error, {
+					cacheKey,
+					result,
+					historyLength: history?.length
+				}, 'low', {
+					memoryManager: this.memoryManager
+				});
+			}
+		}
 
-        scores.verse += applyAT2030Gain((1 - Math.abs(energy - 0.5)) * 1.5, freqIdxMap.mid);
-        scores.verse += applyAT2030Gain((1 - Math.abs(transientDensity - 0.5)) * 1.2, freqIdxMap.subBass);
-        scores.verse += applyAT2030Gain(spectralEntropy * 1.0, freqIdxMap.high);
-        scores.verse += applyAT2030Gain((1 - tempoChange) * 0.8, freqIdxMap.mid);
-        scores.verse += applyAT2030Gain((1 - Math.abs(chromaPresence - 0.5)) * 1.2, freqIdxMap.mid);
-        scores.verse += applyAT2030Gain((1 - chromaFlux) * 1.0, freqIdxMap.high);
+		// Debug log
+		if (isDebug) {
+			console.debug(`Song structure analysis result`, {
+				input: {
+					spectralProfile: {
+						...validatedSpectral,
+						chromaPresence,
+						chromaFlux
+					},
+					tempoMemory: validatedTempoMemory,
+					polyphonicPitchesLength: validatedPolyphonicPitches.length,
+					currentGenre: validatedCurrentGenre,
+					cpuLoad,
+					isLowPowerDevice,
+					lastSection
+				},
+				scores,
+				output: result
+			});
+		}
 
-        // Dự đoán từ lịch sử với trọng số động
-        const history = this.memoryManager?.get('songStructureHistory') || [];
-        const lastSection = history.length > 0 ? history[history.length - 1]?.section : null;
-        const historyWeight = history.length > 5 ? 0.6 : 0.3;
-        if (lastSection === 'chorus') scores.verse += historyWeight;
-        if (lastSection === 'intro') scores.verse += historyWeight;
-        if (lastSection === 'bridge') scores.chorus += historyWeight;
-
-        // Chọn section có điểm cao nhất
-        const maxScore = Math.max(...Object.values(scores));
-        section = Object.keys(scores).find(key => scores[key] === maxScore) || 'verse';
-        confidence = maxScore / (maxScore + 1);
-
-        // Áp dụng EmotionTimbreMap
-        const timbreCurve = computeEmotionTimbreMap(section);
-        const emotionalVector = section === 'chorus' ? 1.15 : section === 'intro' ? 0.85 : 1.0;
-
-        // Gán structureFactor
-        const factorMap = {
-            chorus: 1.4 * emotionalVector,
-            intro: 0.8 * emotionalVector,
-            bridge: 1.2 * emotionalVector,
-            verse: 1.0 * emotionalVector
-        };
-        structureFactor = factorMap[section] * pitchAdjust * formantScale * deviceAdaptFactor;
-        structureFactor = Math.max(0.5, Math.min(2.0, ensureFinite(structureFactor, 1.0, { errorMessage: 'Invalid structureFactor' })));
-
-        // Kết quả
-        const result = {
-            section,
-            structureFactor,
-            confidence,
-            timbreCurve: timbreCurve.slice(0, 10),
-            emotionalVector,
-            formantScale,
-            keyIndex,
-            keyStrength
-        };
-
-        // Lưu vào MemoryManager
-        if (this.memoryManager && typeof this.memoryManager.set === 'function') {
-            try {
-                this.memoryManager.set(cacheKey, result, 'high', {
-                    timestamp: Date.now(),
-                    expiry: Date.now() + 10000
-                });
-                this.memoryManager.set('lastStructure', result, 'high', {
-                    timestamp: Date.now()
-                });
-                this.memoryManager.set('lastInputHash', currentInputHash, 'low', {
-                    timestamp: Date.now()
-                });
-                this.memoryManager.set('lastChroma', validatedSpectral.chroma, 'low', {
-                    timestamp: Date.now()
-                });
-                this.memoryManager.set('lastEnergy', energy, 'low', {
-                    timestamp: Date.now()
-                });
-
-                let history = this.memoryManager.get('songStructureHistory') || [];
-                history.push({
-                    section,
-                    structureFactor,
-                    confidence,
-                    timestamp: Date.now(),
-                    chroma: validatedSpectral.chroma,
-                    emotionalVector,
-                    formantScale,
-                    keyIndex,
-                    keyStrength
-                });
-                history = history.slice(-50); // Giới hạn lịch sử
-                this.memoryManager.set('songStructureHistory', history, 'low', {
-                    timestamp: Date.now()
-                });
-
-                this.memoryManager.pruneCache(this.memoryManager.getDynamicMaxSize?.() || 100);
-                if (isDebug) console.debug(`Stored song structure for key: ${cacheKey}`, {
-                    result,
-                    historyLength: history.length,
-                    chromaPresence,
-                    chromaFlux,
-                    keyIndex,
-                    keyStrength
-                });
-            } catch (error) {
-                handleError('Failed to store song structure', error, {
-                    cacheKey,
-                    result,
-                    historyLength: history?.length
-                }, 'low', { memoryManager: this.memoryManager });
-            }
-        }
-
-        // Debug log
-        if (isDebug) {
-            console.debug(`Song structure analysis result`, {
-                input: {
-                    spectralProfile: {
-                        ...validatedSpectral,
-                        chromaPresence,
-                        chromaFlux,
-                        keyIndex,
-                        keyStrength
-                    },
-                    tempoMemory: validatedTempoMemory,
-                    polyphonicPitchesLength: validatedPolyphonicPitches.length,
-                    currentGenre: validatedCurrentGenre,
-                    cpuLoad,
-                    isLowPowerDevice,
-                    lastSection,
-                    listenerProfile
-                },
-                scores,
-                output: result,
-                spectralAttention: spectralAttention.slice(0, 10),
-                psychoacousticWeight: psychoacousticWeight.slice(0, 10),
-                timbreCurve: timbreCurve.slice(0, 10)
-            });
-        }
-
-        return result;
-    } catch (error) {
-        handleError('Error analyzing song structure', error, {
-            spectralProfile,
-            tempoMemory,
-            polyphonicPitches,
-            currentGenre,
-            listenerProfile
-        }, 'high', { memoryManager: this.memoryManager });
-        return {
-            section: 'verse',
-            structureFactor: 1.0,
-            confidence: 0.5,
-            timbreCurve: new Float32Array(10).fill(1.0),
-            emotionalVector: 1.0,
-            formantScale: 1.0,
-            keyIndex: 0,
-            keyStrength: 0.5
-        };
-    }
+		return result;
+	} catch (error) {
+		handleError('Error analyzing song structure', error, {
+			spectralProfile,
+			tempoMemory,
+			polyphonicPitches,
+			currentGenre
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+		return {
+			section: 'verse',
+			structureFactor: 1.0,
+			confidence: 0.5
+		};
+	}
 };
 
 /**
  * Calculates max cache size based on device memory
  */
 Jungle.prototype.calculateMaxCacheSize = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    // Lấy thông tin thiết bị
-    const deviceMemory = navigator.deviceMemory || (navigator.hardwareConcurrency ? Math.max(2, navigator.hardwareConcurrency / 2) : 4); // Fallback dựa trên CPU cores
-    const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+	// Lấy thông tin thiết bị
+	const deviceMemory = navigator.deviceMemory || (navigator.hardwareConcurrency ? Math.max(2, navigator.hardwareConcurrency / 2) : 4); // Fallback dựa trên CPU cores
+	const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
 
-    // Lấy CPU load
-    const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, {
-        errorMessage: 'Invalid cpuLoad'
-    }) : 0.5;
+	// Lấy CPU load
+	const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, {
+		errorMessage: 'Invalid cpuLoad'
+	}) : 0.5;
 
-    // Lấy spectralProfile từ context hiện tại
-    const spectralProfile = this.spectralProfile || {
-        spectralComplexity: 0.5,
-        vocalPresence: 0.5
-    };
-    const profile = this.context?.profile || 'smartStudio'; // Lấy profile từ context
-    const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
+	// Tính kích thước cơ bản dựa trên deviceMemory
+	let baseCacheSize = deviceMemory * 25; // 25MB per GB
+	baseCacheSize = Math.min(100, baseCacheSize); // Giới hạn tối đa 100MB
 
-    // Tính deviceAdaptFactor (HiFi AT2030)
-    const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2) * (spectralProfile.spectralComplexity > 0.7 ? 0.8 : 1.0)));
+	// Điều chỉnh dựa trên cpuLoad và isLowPowerDevice
+	const loadAdjust = cpuLoad > 0.9 ? 0.7 : cpuLoad > 0.7 ? 0.85 : 1.0; // Giảm khi CPU tải cao
+	const deviceAdjust = isLowPowerDevice ? 0.8 : 1.0; // Giảm trên thiết bị yếu
+	let adjustedCacheSize = baseCacheSize * loadAdjust * deviceAdjust;
 
-    // Tính kích thước cơ bản dựa trên deviceMemory
-    let baseCacheSize = deviceMemory * 25; // 25MB per GB
-    baseCacheSize = Math.min(100, baseCacheSize); // Giới hạn tối đa 100MB
+	// Tích hợp thống kê từ MemoryManager
+	let cacheStats = {
+		hitRate: 0.5,
+		totalSize: 0
+	};
+	if (this.memoryManager && typeof this.memoryManager.getCacheStats === 'function') {
+		cacheStats = this.memoryManager.getCacheStats();
+		// Tăng cache nếu hit rate cao (>0.8) và bộ nhớ còn dư
+		if (cacheStats.hitRate > 0.8 && cacheStats.totalSize < adjustedCacheSize * 0.9) {
+			adjustedCacheSize *= 1.1; // Tăng 10%
+		}
+		// Giảm cache nếu hit rate thấp (<0.3) hoặc bộ nhớ gần đầy
+		if (cacheStats.hitRate < 0.3 || cacheStats.totalSize > adjustedCacheSize * 1.2) {
+			adjustedCacheSize *= 0.9; // Giảm 10%
+		}
+	}
 
-    // Điều chỉnh dựa trên cpuLoad, isLowPowerDevice, và profile
-    const loadAdjust = cpuLoad > 0.9 ? 0.7 : cpuLoad > 0.7 ? 0.85 : 1.0; // Giảm khi CPU tải cao
-    const deviceAdjust = isLowPowerDevice ? 0.8 : 1.0; // Giảm trên thiết bị yếu
-    const profileAdjust = {
-        warm: 1.0,
-        bright: 0.9,
-        bassHeavy: 1.2,
-        vocal: 1.1,
-        proNatural: 1.0,
-        karaokeDynamic: 1.1,
-        rockMetal: 1.2,
-        smartStudio: 1.0
-    }[profile] || 1.0; // Tăng cache cho profile cần xử lý phức tạp
-    const listenerAdjust = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0; // Điều chỉnh theo listenerProfile
-    let adjustedCacheSize = baseCacheSize * loadAdjust * deviceAdjust * profileAdjust * listenerAdjust * deviceAdaptFactor;
+	// Giới hạn cuối cùng
+	adjustedCacheSize = Math.max(10, Math.min(100, ensureFinite(adjustedCacheSize, 50, {
+		errorMessage: 'Invalid cache size'
+	}))); // Tối thiểu 10MB, tối đa 100MB
 
-    // Tích hợp thống kê từ MemoryManager
-    let cacheStats = {
-        hitRate: 0.5,
-        totalSize: 0
-    };
-    if (this.memoryManager && typeof this.memoryManager.getCacheStats === 'function') {
-        cacheStats = this.memoryManager.getCacheStats();
-        // Tăng cache nếu hit rate cao (>0.8) và bộ nhớ còn dư
-        if (cacheStats.hitRate > 0.8 && cacheStats.totalSize < adjustedCacheSize * 0.9) {
-            adjustedCacheSize *= 1.1; // Tăng 10%
-        }
-        // Giảm cache nếu hit rate thấp (<0.3) hoặc bộ nhớ gần đầy
-        if (cacheStats.hitRate < 0.3 || cacheStats.totalSize > adjustedCacheSize * 1.2) {
-            adjustedCacheSize *= 0.9; // Giảm 10%
-        }
-    }
+	// Debug log
+	if (isDebug) {
+		console.debug('Calculated max cache size', {
+			deviceMemory,
+			isLowPowerDevice,
+			cpuLoad,
+			baseCacheSize,
+			loadAdjust,
+			deviceAdjust,
+			cacheStats: {
+				hitRate: cacheStats.hitRate,
+				totalSize: cacheStats.totalSize
+			},
+			finalCacheSize: adjustedCacheSize
+		});
+	}
 
-    // Giới hạn cuối cùng
-    adjustedCacheSize = Math.max(10, Math.min(100, ensureFinite(adjustedCacheSize, 50, {
-        errorMessage: 'Invalid cache size'
-    }))); // Tối thiểu 10MB, tối đa 100MB
-
-    // Debug log
-    if (isDebug) {
-        console.debug('Calculated max cache size', {
-            deviceMemory,
-            isLowPowerDevice,
-            cpuLoad,
-            baseCacheSize,
-            loadAdjust,
-            deviceAdjust,
-            profileAdjust,
-            listenerAdjust,
-            deviceAdaptFactor,
-            spectralComplexity: spectralProfile.spectralComplexity,
-            cacheStats: {
-                hitRate: cacheStats.hitRate,
-                totalSize: cacheStats.totalSize
-            },
-            finalCacheSize: adjustedCacheSize
-        });
-    }
-
-    return adjustedCacheSize;
+	return adjustedCacheSize;
 };
 
 /**
@@ -10507,475 +8915,382 @@ Jungle.prototype.calculateMaxCacheSize = function() {
  * @returns {string} Cache signature.
  */
 function generateCacheSignature(cacheKey, context = {}) {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    try {
-        // Tích hợp timestamp để giảm va chạm
-        const timestamp = Date.now();
-        const profile = context.profile || 'smartStudio'; // Lấy profile từ context
-        const listenerProfile = context.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const enhancedKey = JSON.stringify({
-            cacheKey,
-            timestamp: Math.floor(timestamp / 1000), // Giảm độ chi tiết timestamp để tối ưu cache
-            spectralProfile: {
-                chroma: context.spectralProfile?.chroma?.slice(0, 12), // Giới hạn chroma
-                spectralFlux: context.spectralProfile?.spectralFlux,
-                spectralEntropy: context.spectralProfile?.spectralEntropy,
-                harmonicRatio: context.spectralProfile?.harmonicRatio,
-                vocalPresence: context.spectralProfile?.vocalPresence
-            },
-            songStructure: context.songStructure || {},
-            profile, // Thêm profile
-            listenerProfile // Thêm listenerProfile
-        }, (key, value) => {
-            // Tối ưu cho thiết bị yếu
-            const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-            if (isLowPowerDevice && key === 'chroma' && Array.isArray(value)) {
-                return value.slice(0, 6); // Giới hạn thêm trên thiết bị yếu
-            }
-            return value;
-        });
+	// Tích hợp timestamp để giảm va chạm
+	const timestamp = Date.now();
+	const enhancedKey = JSON.stringify({
+		cacheKey,
+		timestamp: Math.floor(timestamp / 1000), // Giảm độ chi tiết timestamp để tối ưu cache
+		spectralProfile: context.spectralProfile || {}, // Tích hợp spectralProfile
+		songStructure: context.songStructure || {} // Tích hợp songStructure
+	});
 
-        // Thuật toán hash cải tiến (FNV-1a 32-bit)
-        let hash = 2166136261; // FNV offset basis
-        for (let i = 0; i < enhancedKey.length; i++) {
-            hash ^= enhancedKey.charCodeAt(i);
-            hash = (hash * 16777619) | 0; // FNV prime, giữ 32-bit
-        }
+	// Thuật toán hash cải tiến (FNV-1a 32-bit)
+	let hash = 2166136261; // FNV offset basis
+	for (let i = 0; i < enhancedKey.length; i++) {
+		hash ^= enhancedKey.charCodeAt(i);
+		hash = (hash * 16777619) | 0; // FNV prime, giữ 32-bit
+	}
 
-        const signature = hash.toString(36);
+	const signature = hash.toString(36);
 
-        // Kiểm tra trùng lặp trong MemoryManager
-        if (this.memoryManager && typeof this.memoryManager.get === 'function') {
-            const existing = this.memoryManager.get(signature);
-            if (existing && isDebug) {
-                console.debug('Cache signature collision detected', {
-                    signature,
-                    cacheKey,
-                    context: {
-                        spectralProfile: context.spectralProfile,
-                        songStructure: context.songStructure,
-                        profile,
-                        listenerProfile
-                    },
-                    existingEntry: existing
-                });
-            }
-        }
+	// Kiểm tra trùng lặp trong MemoryManager
+	if (this.memoryManager && typeof this.memoryManager.get === 'function') {
+		const existing = this.memoryManager.get(signature);
+		if (existing && isDebug) {
+			console.debug('Cache signature collision detected', {
+				signature,
+				cacheKey,
+				context,
+				existingEntry: existing
+			});
+		}
+	}
 
-        // Debug log
-        if (isDebug) {
-            console.debug('Generated cache signature', {
-                cacheKey,
-                signature,
-                context: {
-                    spectralProfile: context.spectralProfile,
-                    songStructure: context.songStructure,
-                    profile,
-                    listenerProfile
-                },
-                cacheSize: this.memoryManager?.getCacheStats?.()?.totalSize || 0
-            });
-        }
+	// Debug log
+	if (isDebug) {
+		console.debug('Generated cache signature', {
+			cacheKey,
+			signature,
+			context: {
+				spectralProfile: context.spectralProfile,
+				songStructure: context.songStructure
+			},
+			cacheSize: this.memoryManager?.getCacheStats?.()?.totalSize || 0
+		});
+	}
 
-        return signature;
-    } catch (error) {
-        handleError('Error generating cache signature', error, { cacheKey, context }, 'low');
-        return cacheKey; // Fallback
-    }
+	return signature;
 }
 
 // Receive user feedback with extended support
 Jungle.prototype.receiveUserFeedback = function(feedback) {
-    if (!this.memoryManager) {
-        console.warn('MemoryManager not initialized, skipping feedback');
-        return;
-    }
+	if (!this.memoryManager) {
+		console.warn('MemoryManager not initialized, skipping feedback');
+		return;
+	}
 
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    // Chuẩn hóa và phân tích feedback
-    const normalizedFeedback = feedback.toLowerCase().trim();
-    const profile = this.context?.profile || 'smartStudio'; // Lấy profile từ context
-    const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-    const feedbackData = {
-        feedback: normalizedFeedback,
-        timestamp: Date.now(),
-        expiry: Date.now() + 30000, // 30s expiry
-        semanticCategory: this.analyzeFeedbackSemantics(normalizedFeedback, { profile, listenerProfile }), // Phân loại ngữ nghĩa
-        songStructure: this.memoryManager.get('lastStructure')?.section || 'unknown', // Liên kết với section
-        profile, // Thêm profile
-        listenerProfile // Thêm listenerProfile
-    };
+	// Chuẩn hóa và phân tích feedback
+	const normalizedFeedback = feedback.toLowerCase().trim();
+	const feedbackData = {
+		feedback: normalizedFeedback,
+		timestamp: Date.now(),
+		expiry: Date.now() + 30000, // 30s expiry
+		semanticCategory: this.analyzeFeedbackSemantics(normalizedFeedback), // Phân loại ngữ nghĩa
+		songStructure: this.memoryManager.get('lastStructure')?.section || 'unknown' // Liên kết với section
+	};
 
-    // Kiểm tra feedback lặp lại
-    const feedbackList = this.memoryManager.buffers.get('userFeedback') || [];
-    const lastFeedback = feedbackList.length > 0 ? feedbackList[feedbackList.length - 1] : null;
-    if (lastFeedback?.feedback === normalizedFeedback && Date.now() - lastFeedback.timestamp < 5000) {
-        if (isDebug) console.debug('Skipping duplicate feedback:', feedbackData);
-        return;
-    }
+	// Kiểm tra feedback lặp lại
+	const feedbackList = this.memoryManager.buffers.get('userFeedback') || [];
+	const lastFeedback = feedbackList.length > 0 ? feedbackList[feedbackList.length - 1] : null;
+	if (lastFeedback?.feedback === normalizedFeedback && Date.now() - lastFeedback.timestamp < 5000) {
+		if (isDebug) console.debug('Skipping duplicate feedback:', feedbackData);
+		return;
+	}
 
-    // Lưu vào MemoryManager
-    feedbackList.push(feedbackData);
-    this.memoryManager.buffers.set('userFeedback', feedbackList.slice(-20), {
-        priority: 'medium'
-    });
-    this.memoryManager.pruneCache(this.calculateMaxCacheSize());
+	// Lưu vào MemoryManager
+	feedbackList.push(feedbackData);
+	this.memoryManager.buffers.set('userFeedback', feedbackList.slice(-20), {
+		priority: 'medium'
+	});
+	this.memoryManager.pruneCache(this.calculateMaxCacheSize());
 
-    // Tối ưu lưu trữ trong chrome.storage.local
-    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        chrome.storage.local.get(['userFeedback'], (result) => {
-            let storedFeedback = result.userFeedback || [];
-            // Nén dữ liệu bằng cách chỉ lưu các trường cần thiết
-            const compressedFeedback = {
-                f: normalizedFeedback, // feedback
-                t: feedbackData.timestamp, // timestamp
-                s: feedbackData.songStructure, // songStructure
-                c: feedbackData.semanticCategory, // semanticCategory
-                p: feedbackData.profile, // profile
-                l: feedbackData.listenerProfile // listenerProfile
-            };
-            storedFeedback.push(compressedFeedback);
-            storedFeedback = storedFeedback.slice(-20); // Giới hạn 20 mục
-            chrome.storage.local.set({
-                userFeedback: storedFeedback
-            }, () => {
-                if (isDebug) console.debug('Stored user feedback in chrome.storage.local:', compressedFeedback);
-            });
-        });
-    }
+	// Tối ưu lưu trữ trong chrome.storage.local
+	if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+		chrome.storage.local.get(['userFeedback'], (result) => {
+			let storedFeedback = result.userFeedback || [];
+			// Nén dữ liệu bằng cách chỉ lưu các trường cần thiết
+			const compressedFeedback = {
+				f: normalizedFeedback, // feedback
+				t: feedbackData.timestamp, // timestamp
+				s: feedbackData.songStructure, // songStructure
+				c: feedbackData.semanticCategory // semanticCategory
+			};
+			storedFeedback.push(compressedFeedback);
+			storedFeedback = storedFeedback.slice(-20); // Giới hạn 20 mục
+			chrome.storage.local.set({
+				userFeedback: storedFeedback
+			}, () => {
+				if (isDebug) console.debug('Stored user feedback in chrome.storage.local:', compressedFeedback);
+			});
+		});
+	}
 
-    // Debug log chi tiết
-    if (isDebug) {
-        console.debug('Received user feedback:', {
-            feedback: feedbackData.feedback,
-            semanticCategory: feedbackData.semanticCategory,
-            songStructure: feedbackData.songStructure,
-            timestamp: feedbackData.timestamp,
-            profile: feedbackData.profile,
-            listenerProfile: feedbackData.listenerProfile,
-            feedbackListLength: feedbackList.length,
-            cacheSize: this.memoryManager.getCacheStats?.()?.totalSize || 0
-        });
-    }
+	// Debug log chi tiết
+	if (isDebug) {
+		console.debug('Received user feedback:', {
+			feedback: feedbackData.feedback,
+			semanticCategory: feedbackData.semanticCategory,
+			songStructure: feedbackData.songStructure,
+			timestamp: feedbackData.timestamp,
+			feedbackListLength: feedbackList.length,
+			cacheSize: this.memoryManager.getCacheStats?.()?.totalSize || 0
+		});
+	}
 };
 
-// Hàm phụ để phân tích ngữ nghĩa feedback
-Jungle.prototype.analyzeFeedbackSemantics = function(feedback, context = {}) {
-    const profile = context.profile || 'smartStudio';
-    const listenerProfile = context.listenerProfile || 'standard';
-    const keywords = {
-        treble: ['chói tai', 'screech', 'harsh', 'bright', 'treble trong trẻo', 'sáng quá'],
-        bass: ['mạnh bass', 'deep', 'boomy', 'rumbly', 'bass chắc', 'bịch bịch', 'trầm quá'],
-        vocal: ['ấm giọng', 'clear voice', 'vocal', 'singer', 'giọng rõ', 'vocal tự nhiên', 'ma mị'],
-        muddy: ['mờ đục', 'muddy', 'unclear', 'đục quá'],
-        loud: ['to quá', 'loud', 'overpower'],
-        quiet: ['nhỏ quá', 'quiet', 'low volume'],
-        warmth: ['ấm áp', 'tự nhiên', 'mượt mà'], // HiFi AT2030
-        clarity: ['trong trẻo', 'mượt mà', 'rõ ràng'], // HiFi AT2030
-        harmonic: ['giàu cảm xúc', 'hòa âm phong phú', 'harmonic rich'] // HiFi AT2030
-    };
+// Hàm phụ để phân tích ngữ nghĩa feedback (không có trong code gốc)
+Jungle.prototype.analyzeFeedbackSemantics = function(feedback) {
+	const keywords = {
+		treble: ['chói tai', 'screech', 'harsh', 'bright'],
+		bass: ['mạnh bass', 'deep', 'boomy', 'rumbly'],
+		vocal: ['ấm giọng', 'clear voice', 'vocal', 'singer'],
+		muddy: ['mờ đục', 'muddy', 'unclear'],
+		loud: ['to quá', 'loud', 'overpower'],
+		quiet: ['nhỏ quá', 'quiet', 'low volume']
+	};
 
-    // Điều chỉnh từ khóa theo profile
-    if (profile === 'warm' || profile === 'vocal') {
-        keywords.warmth.push('giọng ấm', 'âm sắc mượt');
-        keywords.vocal.push('giọng trong', 'vocal mượt mà');
-    }
-    if (profile === 'bright' || profile === 'smartStudio') {
-        keywords.treble.push('sáng rõ', 'treble mượt');
-        keywords.clarity.push('âm thanh tinh khiết');
-    }
-    if (profile === 'bassHeavy' || profile === 'rockMetal') {
-        keywords.bass.push('bass lan tỏa', 'trầm mạnh');
-    }
-    if (profile === 'karaokeDynamic') {
-        keywords.vocal.push('giọng nổi bật', 'vocal rõ ràng');
-    }
-
-    // Điều chỉnh theo listenerProfile
-    if (listenerProfile === 'audiophile') {
-        keywords.clarity.push('chi tiết cao', 'âm thanh chuẩn');
-        keywords.harmonic.push('hòa âm chi tiết');
-    }
-
-    for (const [category, terms] of Object.entries(keywords)) {
-        if (terms.some(term => feedback.includes(term))) {
-            return category;
-        }
-    }
-    return 'unknown';
+	for (const [category, terms] of Object.entries(keywords)) {
+		if (terms.some(term => feedback.includes(term))) {
+			return category;
+		}
+	}
+	return 'unknown';
 };
 
 Jungle.prototype.applyUserFeedback = function() {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    try {
-        const feedbackList = this.memoryManager?.buffers.get('userFeedback') || [];
-        const spectralProfile = this.spectralProfile || {
-            spectralComplexity: 0.5,
-            transientEnergy: 0.5,
-            vocalPresence: 0.5,
-            bass: 0.5,
-            midHigh: 0.5,
-            air: 0.5,
-            spectralFlux: 0.5,
-            chroma: Array(12).fill(0.5)
-        };
-        const profile = this.context?.profile || 'smartStudio'; // Lấy profile từ context
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
-        const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const deviceMemory = navigator.deviceMemory || 4;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // HiFi AT2030
+	try {
+		const feedbackList = this.memoryManager?.buffers.get('userFeedback') || [];
+		const spectralProfile = this.spectralProfile || {
+			spectralComplexity: 0.5,
+			transientEnergy: 0.5,
+			vocalPresence: 0.5,
+			bass: 0.5,
+			midHigh: 0.5,
+			air: 0.5,
+			spectralFlux: 0.5,
+			chroma: Array(12).fill(0.5)
+		};
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5) : 0.5;
+		const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
+		const deviceMemory = navigator.deviceMemory || 4;
+		const cpuLoadAdjust = cpuLoad > 0.9 || isLowPowerDevice || deviceMemory < 4 ? 0.8 : 1.0;
 
-        // Tích hợp songStructure và semanticCategory
-        const songStructure = this.memoryManager?.get('lastStructure') || {
-            section: 'unknown'
-        };
-        const feedbackSemantic = feedbackList.find(f => f.semanticCategory && f.timestamp > Date.now() - 60000)?.semanticCategory || 'general';
-        const isChorus = songStructure.section === 'chorus';
-        const isVocalFeedback = feedbackSemantic === 'vocal';
+		// Tích hợp songStructure và semanticCategory
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const feedbackSemantic = feedbackList.find(f => f.semanticCategory && f.timestamp > Date.now() - 60000)?.semanticCategory || 'general';
+		const isChorus = songStructure.section === 'chorus';
+		const isVocalFeedback = feedbackSemantic === 'vocal';
 
-        // Check cached adjustments
-        const cacheKey = this.generateCacheSignature?.('feedbackAdjustments', {
-            spectralProfile,
-            songStructure,
-            feedbackList,
-            cpuLoad,
-            profile,
-            listenerProfile
-        }) || `feedbackAdjustments_${this.contextId}`;
-        const cachedAdjustments = this.memoryManager?.get(cacheKey);
-        if (cachedAdjustments?.timestamp > Date.now() - 30000) {
-            if (isDebug) console.debug('Reused cached feedback adjustments', {
-                cacheKey,
-                cachedAdjustments
-            });
-            return cachedAdjustments.adjustments;
-        }
+		// Check cached adjustments
+		const cacheKey = this.generateCacheSignature?.('feedbackAdjustments', {
+			spectralProfile,
+			songStructure,
+			feedbackList,
+			cpuLoad
+		}) || `feedbackAdjustments_${this.contextId}`;
+		const cachedAdjustments = this.memoryManager?.get(cacheKey);
+		if (cachedAdjustments?.timestamp > Date.now() - 30000) {
+			if (isDebug) console.debug('Reused cached feedback adjustments', {
+				cacheKey,
+				cachedAdjustments
+			});
+			return cachedAdjustments.adjustments;
+		}
 
-        const adjustments = {
-            bass: 0,
-            treble: 0,
-            mid: 0,
-            clarity: 0,
-            vocalClarity: 0,
-            distortion: 0,
-            warmth: 0,
-            air: 0,
-            subBass: 0,
-            harmonicRichness: 0
-        };
+		const adjustments = {
+			bass: 0,
+			treble: 0,
+			mid: 0,
+			clarity: 0,
+			vocalClarity: 0,
+			distortion: 0,
+			warmth: 0,
+			air: 0,
+			subBass: 0,
+			harmonicRichness: 0
+		};
 
-        // Hàm tính mức độ phản hồi
-        const getFeedbackIntensity = (feedback) => {
-            if (feedback.includes('very') || feedback.includes('much') || feedback.includes('a lot') || feedback.includes('rất')) return 1.5;
-            if (feedback.includes('slightly') || feedback.includes('hơi') || feedback.includes('nhẹ')) return 0.8;
-            return 1.0;
-        };
+		// Hàm tính mức độ phản hồi
+		const getFeedbackIntensity = (feedback) => {
+			if (feedback.includes('very') || feedback.includes('much') || feedback.includes('a lot') || feedback.includes('rất')) return 1.5;
+			if (feedback.includes('slightly') || feedback.includes('hơi') || feedback.includes('nhẹ')) return 0.8;
+			return 1.0;
+		};
 
-        // Điều chỉnh theo profile
-        const profileAdjust = {
-            warm: { warmth: 1.2, bass: 1.1, vocalClarity: 1.0 },
-            bright: { treble: 1.2, clarity: 1.2, air: 1.1 },
-            bassHeavy: { bass: 1.3, subBass: 1.2 },
-            vocal: { vocalClarity: 1.3, clarity: 1.1, warmth: 1.0 },
-            proNatural: { clarity: 1.0, harmonicRichness: 1.0 },
-            karaokeDynamic: { vocalClarity: 1.4, clarity: 1.2 },
-            rockMetal: { bass: 1.2, treble: 1.1, harmonicRichness: 1.1 },
-            smartStudio: { clarity: 1.1, warmth: 1.0, harmonicRichness: 1.0 }
-        }[profile] || { clarity: 1.0 };
+		// Xử lý phản hồi
+		feedbackList.forEach(feedback => {
+			if (feedback.expiry && feedback.expiry < Date.now()) return;
+			const intensity = getFeedbackIntensity(feedback.feedback.toLowerCase());
 
-        // Điều chỉnh theo listenerProfile
-        const listenerAdjust = listenerProfile === 'audiophile' ? { clarity: 1.2, harmonicRichness: 1.1 } :
-            listenerProfile === 'casual' ? { warmth: 1.1, bass: 1.0 } : { clarity: 1.0 };
+			// Bass
+			if (feedback.feedback.includes('too much bass') || feedback.feedback.includes('bịch bịch') || feedback.feedback.includes('quá trầm')) {
+				adjustments.bass -= 1.5 * intensity;
+				adjustments.subBass -= 1.2 * intensity;
+			} else if (feedback.feedback.includes('more bass') || feedback.feedback.includes('bass bùm bùm') || feedback.feedback.includes('trầm hơn')) {
+				adjustments.bass += 1.5 * intensity * (spectralProfile.bass < 0.7 ? 1.2 : 1.0);
+				adjustments.subBass += 1.2 * intensity;
+			}
 
-        // Xử lý phản hồi
-        feedbackList.forEach(feedback => {
-            if (feedback.expiry && feedback.expiry < Date.now()) return;
-            const intensity = getFeedbackIntensity(feedback.feedback.toLowerCase());
-            const profileFactor = profileAdjust[feedback.semanticCategory] || 1.0;
-            const listenerFactor = listenerAdjust[feedback.semanticCategory] || 1.0;
+			// Treble
+			if (feedback.feedback.includes('too bright') || feedback.feedback.includes('too much treble') || feedback.feedback.includes('chói')) {
+				adjustments.treble -= 1.5 * intensity;
+				adjustments.air -= 1.2 * intensity;
+			} else if (feedback.feedback.includes('more treble') || feedback.feedback.includes('treble trong trẻo') || feedback.feedback.includes('sáng hơn')) {
+				adjustments.treble += 1.5 * intensity * (spectralProfile.air < 0.7 ? 1.2 : 1.0);
+				adjustments.air += 1.0 * intensity;
+			}
 
-            // Bass
-            if (feedback.feedback.includes('too much bass') || feedback.feedback.includes('bịch bịch') || feedback.feedback.includes('quá trầm')) {
-                adjustments.bass -= 1.5 * intensity * profileFactor * listenerFactor;
-                adjustments.subBass -= 1.2 * intensity * profileFactor * listenerFactor;
-            } else if (feedback.feedback.includes('more bass') || feedback.feedback.includes('bass bùm bùm') || feedback.feedback.includes('trầm hơn')) {
-                adjustments.bass += 1.5 * intensity * profileFactor * listenerFactor * (spectralProfile.bass < 0.7 ? 1.2 : 1.0);
-                adjustments.subBass += 1.2 * intensity * profileFactor * listenerFactor;
-            }
+			// Mid
+			if (feedback.feedback.includes('muddy') || feedback.feedback.includes('too much mid') || feedback.feedback.includes('đục')) {
+				adjustments.mid -= 1.5 * intensity;
+			} else if (feedback.feedback.includes('more mid') || feedback.feedback.includes('nhạc cụ rõ') || feedback.feedback.includes('giữa rõ hơn')) {
+				adjustments.mid += 1.5 * intensity * (spectralProfile.midHigh < 0.7 ? 1.2 : 1.0);
+			}
 
-            // Treble
-            if (feedback.feedback.includes('too bright') || feedback.feedback.includes('too much treble') || feedback.feedback.includes('chói')) {
-                adjustments.treble -= 1.5 * intensity * profileFactor * listenerFactor;
-                adjustments.air -= 1.2 * intensity * profileFactor * listenerFactor;
-            } else if (feedback.feedback.includes('more treble') || feedback.feedback.includes('treble trong trẻo') || feedback.feedback.includes('sáng hơn')) {
-                adjustments.treble += 1.5 * intensity * profileFactor * listenerFactor * (spectralProfile.air < 0.7 ? 1.2 : 1.0);
-                adjustments.air += 1.0 * intensity * profileFactor * listenerFactor;
-            }
+			// Clarity
+			if (feedback.feedback.includes('not clear') || feedback.feedback.includes('more clarity') || feedback.feedback.includes('mượt mà')) {
+				adjustments.clarity += 1.5 * intensity;
+				adjustments.mid += 0.8 * intensity;
+				adjustments.vocalClarity += 0.8 * intensity;
+				adjustments.distortion -= 0.5 * intensity; // Giảm distortion để tăng mượt mà
+			}
 
-            // Mid
-            if (feedback.feedback.includes('muddy') || feedback.feedback.includes('too much mid') || feedback.feedback.includes('đục')) {
-                adjustments.mid -= 1.5 * intensity * profileFactor * listenerFactor;
-            } else if (feedback.feedback.includes('more mid') || feedback.feedback.includes('nhạc cụ rõ') || feedback.feedback.includes('giữa rõ hơn')) {
-                adjustments.mid += 1.5 * intensity * profileFactor * listenerFactor * (spectralProfile.midHigh < 0.7 ? 1.2 : 1.0);
-            }
+			// Vocal clarity
+			if (feedback.feedback.includes('more vocal clarity') || feedback.feedback.includes('vocal tự nhiên') || feedback.feedback.includes('giọng rõ')) {
+				adjustments.vocalClarity += 2.0 * intensity * (spectralProfile.vocalPresence < 0.7 ? 1.3 : 1.0);
+				adjustments.clarity += 0.8 * intensity;
+				adjustments.warmth += 0.5 * intensity;
+			}
 
-            // Clarity
-            if (feedback.feedback.includes('not clear') || feedback.feedback.includes('more clarity') || feedback.feedback.includes('mượt mà') || feedback.feedback.includes('trong trẻo')) {
-                adjustments.clarity += 1.5 * intensity * profileFactor * listenerFactor;
-                adjustments.mid += 0.8 * intensity * profileFactor * listenerFactor;
-                adjustments.vocalClarity += 0.8 * intensity * profileFactor * listenerFactor;
-                adjustments.distortion -= 0.5 * intensity * profileFactor * listenerFactor;
-            }
+			// Distortion và rè
+			if (feedback.feedback.includes('less distortion') || feedback.feedback.includes('rè') || feedback.feedback.includes('xe xe')) {
+				adjustments.distortion -= 2.0 * intensity;
+				adjustments.treble -= 1.0 * intensity * (spectralProfile.air > 0.7 ? 1.2 : 1.0);
+				adjustments.air -= 0.8 * intensity;
+				adjustments.bass -= 0.5 * intensity * (spectralProfile.bass > 0.7 ? 1.2 : 1.0);
+				adjustments.vocalClarity += 0.5 * intensity;
+			}
 
-            // Vocal clarity
-            if (feedback.feedback.includes('more vocal clarity') || feedback.feedback.includes('vocal tự nhiên') || feedback.feedback.includes('giọng rõ') || feedback.feedback.includes('ma mị')) {
-                adjustments.vocalClarity += 2.0 * intensity * profileFactor * listenerFactor * (spectralProfile.vocalPresence < 0.7 ? 1.3 : 1.0);
-                adjustments.clarity += 0.8 * intensity * profileFactor * listenerFactor;
-                adjustments.warmth += 0.5 * intensity * profileFactor * listenerFactor;
-            }
+			// Warmth
+			if (feedback.feedback.includes('ấm áp') || feedback.feedback.includes('tự nhiên') || feedback.feedback.includes('mượt mà')) {
+				adjustments.warmth += 1.2 * intensity;
+				adjustments.bass += 0.5 * intensity;
+				adjustments.mid += 0.5 * intensity;
+			}
 
-            // Distortion và rè
-            if (feedback.feedback.includes('less distortion') || feedback.feedback.includes('rè') || feedback.feedback.includes('xe xe')) {
-                adjustments.distortion -= 2.0 * intensity * profileFactor * listenerFactor;
-                adjustments.treble -= 1.0 * intensity * profileFactor * listenerFactor * (spectralProfile.air > 0.7 ? 1.2 : 1.0);
-                adjustments.air -= 0.8 * intensity * profileFactor * listenerFactor;
-                adjustments.bass -= 0.5 * intensity * profileFactor * listenerFactor * (spectralProfile.bass > 0.7 ? 1.2 : 1.0);
-                adjustments.vocalClarity += 0.5 * intensity * profileFactor * listenerFactor;
-            }
+			// Harmonic richness (dựa trên chroma)
+			if (feedback.feedback.includes('giàu cảm xúc') || feedback.feedback.includes('hòa âm phong phú')) {
+				adjustments.harmonicRichness += 1.0 * intensity;
+				adjustments.mid += 0.5 * intensity;
+			}
+		});
 
-            // Warmth
-            if (feedback.feedback.includes('ấm áp') || feedback.feedback.includes('tự nhiên') || feedback.feedback.includes('mượt mà')) {
-                adjustments.warmth += 1.2 * intensity * profileFactor * listenerFactor;
-                adjustments.bass += 0.5 * intensity * profileFactor * listenerFactor;
-                adjustments.mid += 0.5 * intensity * profileFactor * listenerFactor;
-            }
+		// Xử lý chrome.storage.local
+		if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+			chrome.storage.local.get(['userFeedback'], (result) => {
+				const storedFeedback = result.userFeedback || [];
+				storedFeedback.forEach(feedback => {
+					if (feedback.expiry && feedback.expiry < Date.now()) return;
+					const intensity = getFeedbackIntensity(feedback.feedback.toLowerCase());
+					if (feedback.feedback.includes('more vocal clarity') || feedback.feedback.includes('vocal tự nhiên') || feedback.feedback.includes('giọng rõ')) {
+						adjustments.vocalClarity += 1.2 * intensity;
+						adjustments.clarity += 0.5 * intensity;
+					}
+					if (feedback.feedback.includes('less distortion') || feedback.feedback.includes('rè') || feedback.feedback.includes('xe xe')) {
+						adjustments.distortion -= 1.5 * intensity;
+						adjustments.treble -= 0.8 * intensity;
+						adjustments.air -= 0.5 * intensity;
+					}
+					if (feedback.feedback.includes('ấm áp') || feedback.feedback.includes('tự nhiên') || feedback.feedback.includes('mượt mà')) {
+						adjustments.warmth += 0.8 * intensity;
+						adjustments.bass += 0.3 * intensity;
+					}
+					if (feedback.feedback.includes('giàu cảm xúc') || feedback.feedback.includes('hòa âm phong phú')) {
+						adjustments.harmonicRichness += 0.8 * intensity;
+						adjustments.mid += 0.3 * intensity;
+					}
+				});
 
-            // Harmonic richness
-            if (feedback.feedback.includes('giàu cảm xúc') || feedback.feedback.includes('hòa âm phong phú') || feedback.feedback.includes('harmonic rich')) {
-                adjustments.harmonicRichness += 1.0 * intensity * profileFactor * listenerFactor;
-                adjustments.mid += 0.5 * intensity * profileFactor * listenerFactor;
-            }
-        });
+				// Lưu lại adjustments
+				this.memoryManager?.set(cacheKey, {
+					adjustments,
+					timestamp: Date.now(),
+					expiry: Date.now() + 60000
+				}, 'high');
+			});
+		}
 
-        // Xử lý chrome.storage.local
-        if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-            chrome.storage.local.get(['userFeedback'], (result) => {
-                const storedFeedback = result.userFeedback || [];
-                storedFeedback.forEach(feedback => {
-                    if (feedback.expiry && feedback.expiry < Date.now()) return;
-                    const intensity = getFeedbackIntensity(feedback.f.toLowerCase());
-                    const profileFactor = profileAdjust[feedback.c] || 1.0;
-                    const listenerFactor = listenerAdjust[feedback.c] || 1.0;
-                    if (feedback.f.includes('more vocal clarity') || feedback.f.includes('vocal tự nhiên') || feedback.f.includes('giọng rõ') || feedback.f.includes('ma mị')) {
-                        adjustments.vocalClarity += 1.2 * intensity * profileFactor * listenerFactor;
-                        adjustments.clarity += 0.5 * intensity * profileFactor * listenerFactor;
-                    }
-                    if (feedback.f.includes('less distortion') || feedback.f.includes('rè') || feedback.f.includes('xe xe')) {
-                        adjustments.distortion -= 1.5 * intensity * profileFactor * listenerFactor;
-                        adjustments.treble -= 0.8 * intensity * profileFactor * listenerFactor;
-                        adjustments.air -= 0.5 * intensity * profileFactor * listenerFactor;
-                    }
-                    if (feedback.f.includes('ấm áp') || feedback.f.includes('tự nhiên') || feedback.f.includes('mượt mà')) {
-                        adjustments.warmth += 0.8 * intensity * profileFactor * listenerFactor;
-                        adjustments.bass += 0.3 * intensity * profileFactor * listenerFactor;
-                    }
-                    if (feedback.f.includes('giàu cảm xúc') || feedback.f.includes('hòa âm phong phú') || feedback.f.includes('harmonic rich')) {
-                        adjustments.harmonicRichness += 0.8 * intensity * profileFactor * listenerFactor;
-                        adjustments.mid += 0.3 * intensity * profileFactor * listenerFactor;
-                    }
-                });
+		// Tinh chỉnh dựa trên spectralProfile, songStructure, và semanticCategory
+		if (spectralProfile.transientEnergy > 0.7 || spectralProfile.spectralFlux > 0.7) {
+			adjustments.clarity += 0.5;
+			adjustments.vocalClarity += 0.5;
+		}
+		if (spectralProfile.spectralComplexity > 0.7) {
+			adjustments.distortion -= 0.5;
+		}
+		if (spectralProfile.bass > 0.7 && adjustments.bass > 0) {
+			adjustments.subBass += adjustments.bass * 0.8;
+		}
+		if (spectralProfile.air > 0.7 && adjustments.treble > 0) {
+			adjustments.treble *= 0.8;
+			adjustments.air *= 0.8;
+		}
+		if (spectralProfile.chroma && spectralProfile.chroma.some(val => val > 0.7)) {
+			adjustments.harmonicRichness += 0.5; // Tăng nếu âm sắc phong phú
+		}
+		if (isChorus || isVocalFeedback) {
+			adjustments.vocalClarity += 0.7;
+			adjustments.clarity += 0.5;
+			adjustments.warmth += 0.3;
+		}
 
-                // Lưu lại adjustments
-                this.memoryManager?.set(cacheKey, {
-                    adjustments,
-                    timestamp: Date.now(),
-                    expiry: Date.now() + 60000
-                }, 'high');
-            });
-        }
+		// Áp dụng cpuLoadAdjust
+		Object.keys(adjustments).forEach(key => {
+			adjustments[key] *= cpuLoadAdjust;
+		});
 
-        // Tinh chỉnh dựa trên spectralProfile, songStructure, và semanticCategory
-        if (spectralProfile.transientEnergy > 0.7 || spectralProfile.spectralFlux > 0.7) {
-            adjustments.clarity += 0.5 * profileAdjust.clarity || 1.0;
-            adjustments.vocalClarity += 0.5 * profileAdjust.vocalClarity || 1.0;
-        }
-        if (spectralProfile.spectralComplexity > 0.7) {
-            adjustments.distortion -= 0.5;
-        }
-        if (spectralProfile.bass > 0.7 && adjustments.bass > 0) {
-            adjustments.subBass += adjustments.bass * 0.8 * profileAdjust.subBass || 1.0;
-        }
-        if (spectralProfile.air > 0.7 && adjustments.treble > 0) {
-            adjustments.treble *= 0.8 * profileAdjust.treble || 1.0;
-            adjustments.air *= 0.8 * profileAdjust.air || 1.0;
-        }
-        if (spectralProfile.chroma && spectralProfile.chroma.some(val => val > 0.7)) {
-            adjustments.harmonicRichness += 0.5 * profileAdjust.harmonicRichness || 1.0;
-        }
-        if (isChorus || isVocalFeedback) {
-            adjustments.vocalClarity += 0.7 * profileAdjust.vocalClarity || 1.0;
-            adjustments.clarity += 0.5 * profileAdjust.clarity || 1.0;
-            adjustments.warmth += 0.3 * profileAdjust.warmth || 1.0;
-        }
+		// Clamp adjustments
+		Object.keys(adjustments).forEach(key => {
+			adjustments[key] = Math.max(-4.0, Math.min(4.0, adjustments[key]));
+		});
 
-        // Áp dụng deviceAdaptFactor
-        Object.keys(adjustments).forEach(key => {
-            adjustments[key] *= deviceAdaptFactor;
-        });
+		// Lưu adjustments vào MemoryManager
+		this.memoryManager?.set(cacheKey, {
+			adjustments,
+			timestamp: Date.now(),
+			expiry: Date.now() + 60000
+		}, 'high');
+		this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
 
-        // Clamp adjustments
-        Object.keys(adjustments).forEach(key => {
-            adjustments[key] = Math.max(-4.0, Math.min(4.0, adjustments[key]));
-        });
+		if (isDebug) console.debug('Applied user feedback', {
+			adjustments,
+			spectralProfile,
+			cpuLoad: cpuLoad.toFixed(2),
+			isLowPowerDevice,
+			deviceMemory,
+			songStructure,
+			feedbackSemantic,
+			cacheStats: this.memoryManager?.getCacheStats?.()
+		});
 
-        // Lưu adjustments vào MemoryManager
-        this.memoryManager?.set(cacheKey, {
-            adjustments,
-            timestamp: Date.now(),
-            expiry: Date.now() + 60000
-        }, 'high');
-        this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
-
-        // Debug log
-        if (isDebug) console.debug('Applied user feedback', {
-            adjustments,
-            spectralProfile,
-            cpuLoad: cpuLoad.toFixed(2),
-            isLowPowerDevice,
-            deviceMemory,
-            songStructure,
-            feedbackSemantic,
-            profile,
-            listenerProfile,
-            cacheStats: this.memoryManager?.getCacheStats?.()
-        });
-
-        return adjustments;
-    } catch (error) {
-        console.error('Error applying user feedback:', error, {
-            spectralProfile,
-            cpuLoad,
-            isLowPowerDevice,
-            profile,
-            listenerProfile
-        });
-        return {
-            bass: 0,
-            treble: 0,
-            mid: 0,
-            clarity: 0,
-            vocalClarity: 0,
-            distortion: 0,
-            warmth: 0,
-            air: 0,
-            subBass: 0,
-            harmonicRichness: 0
-        };
-    }
+		return adjustments;
+	} catch (error) {
+		console.error('Error applying user feedback:', error, {
+			spectralProfile,
+			cpuLoad,
+			isLowPowerDevice
+		});
+		return {
+			bass: 0,
+			treble: 0,
+			mid: 0,
+			clarity: 0,
+			vocalClarity: 0,
+			distortion: 0,
+			warmth: 0,
+			air: 0,
+			subBass: 0,
+			harmonicRichness: 0
+		};
+	}
 };
 
 // Optimize sound profile using machine learning simulation
@@ -11000,8 +9315,7 @@ Jungle.prototype.optimizeSoundProfile = function({
     polyphonicAdjust,
     harmonicBoost,
     songStructure,
-    userFeedbackAdjust,
-    listenerProfile = 'standard'
+    userFeedbackAdjust
 }) {
     const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
@@ -11032,16 +9346,12 @@ Jungle.prototype.optimizeSoundProfile = function({
             validatedSpectral[key] = Number.isFinite(spectral[key]) ? Math.max(0, Math.min(1, spectral[key])) : spectralDefaults[key];
         });
 
-        // Validate profile
-        const validProfiles = ['warm', 'bright', 'bassHeavy', 'vocal', 'proNatural', 'karaokeDynamic', 'rockMetal', 'smartStudio'];
-        const validatedProfile = validProfiles.includes(profile) ? profile : 'smartStudio';
-
         // Check CPU load and device capability
         const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, {
             errorMessage: 'Invalid cpuLoad'
         }) : 0.5;
         const isLowPowerDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4;
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2)));
+        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (isLowPowerDevice ? 0.5 : 0.2))); // AT2030 DeviceAdaptFactor
 
         // Multi-layer FFT analysis
         const fftAnalysis = this._analyser ? this.getFFTAnalysis() : null;
@@ -11053,16 +9363,15 @@ Jungle.prototype.optimizeSoundProfile = function({
 
         // Initialize AT2030 parameters
         const at2030Config = {
-            enabled: validatedSpectral.vocalPresence > 0.5 || validatedProfile === 'vocal' || validatedProfile === 'karaokeDynamic' || Math.abs(this.currentPitchMult || 0) > 0,
-            formantScale: 1.0 + (this.currentPitchMult || 0) * 0.02,
-            harmonicBoost: validatedProfile === 'bassHeavy' ? 1.1 : validatedProfile === 'vocal' ? 1.0 : 1.0,
-            transientSculpt: validatedProfile === 'rockMetal' || validatedProfile === 'bassHeavy' ? 1.4 : 1.0,
-            phaseLockFactor: this.qualityMode === 'high' ? 1.0 : 0.8,
-            emotionalVector: listenerProfile === 'audiophile' ? 1.1 : validatedProfile === 'warm' ? 0.9 : validatedProfile === 'rockMetal' ? 1.1 : 1.0,
-            deviceAdaptFactor,
-            timbreProfile: validatedProfile
+            enabled: validatedSpectral.vocalPresence > 0.5 || profile === 'vocal' || profile === 'karaokeDynamic' || Math.abs(this.currentPitchMult || 0) > 0,
+            formantScale: 1.0 + (this.currentPitchMult || 0) * 0.02, // MasterFormantScale
+            harmonicBoost: profile === 'bassHeavy' ? 1.1 : profile === 'vocal' ? 1.0 : 1.0, // QuantumSuperposition
+            transientSculpt: profile === 'rockMetal' || profile === 'bassHeavy' ? 1.4 : 1.0, // TransientSculptAI
+            phaseLockFactor: this.qualityMode === 'high' ? 1.0 : 0.8, // PhaseCoherence
+            emotionalVector: profile === 'warm' ? 0.9 : profile === 'rockMetal' ? 1.1 : 1.0, // AIEmotionalVector
+            deviceAdaptFactor
         };
-        at2030Config.formantScale = Math.max(0.85, Math.min(1.15, at2030Config.formantScale));
+        at2030Config.formantScale = Math.max(0.85, Math.min(1.15, at2030Config.formantScale)); // Clamp formantScale
 
         if (isDebug) {
             console.debug('AT2030 Config initialized', {
@@ -11081,11 +9390,11 @@ Jungle.prototype.optimizeSoundProfile = function({
             spectralProfile: validatedSpectral,
             songStructure,
             userFeedbackAdjust,
-            profile: validatedProfile,
+            profile,
             musicContext
         }) || JSON.stringify({
-            profile: validatedProfile,
-            spectral: validatedSpectral,
+            profile,
+            spectral,
             songStructure
         });
         const lastInputHash = this.memoryManager?.get('lastOptimizeInputHash');
@@ -11357,7 +9666,7 @@ Jungle.prototype.optimizeSoundProfile = function({
                         baseParams.subTrebleGain *= weights.highShelf * masterGain * at2030Config.emotionalVector;
                         baseParams.airGain *= weights.highShelf * masterGain * at2030Config.emotionalVector;
                         baseParams.compressorRatio *= weights.compressor;
-                        baseParams.warmthBoost = (warmthBoost || 0) + 0.5 * at2030Config.emotionalVector;
+                        baseParams.warmthBoost = (warmthBoost || 0) + 0.6 * at2030Config.emotionalVector;
                         baseParams.subMidGain += 0.2 * (validatedSpectral.vocalPresence > 0.7 ? 1.1 : 1.0) * masterGain * at2030Config.emotionalVector;
                         break;
                     case 'bright':
@@ -11621,298 +9930,189 @@ Jungle.prototype.optimizeSoundProfile = function({
 };
 
 Jungle.prototype.setFFTSize = function(size) {
-    const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
+	const isDebug = window.location.hostname === 'localhost' || window.location.search.includes('debug=true');
 
-    try {
-        if (!this._analyser) {
-            throw new Error('Analyser is not initialized');
-        }
+	try {
+		if (!this._analyser) {
+			throw new Error('Analyser is not initialized');
+		}
 
-        const validSizes = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
+		const validSizes = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
 
-        // Detect device performance
-        const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, {
-            errorMessage: 'Invalid CPU load'
-        }) : 0.5;
-        const hardwareConcurrency = navigator.hardwareConcurrency || 4;
-        const deviceMemory = navigator.deviceMemory || 4;
-        const devicePerf = cpuLoad > 0.8 || hardwareConcurrency < 4 || deviceMemory < 4 ? 'low' :
-            cpuLoad > 0.6 || hardwareConcurrency < 8 ? 'medium' : 'high';
-        const qualityMode = this.qualityMode || (devicePerf === 'low' ? 'low' : 'high');
+		// Detect device performance
+		const cpuLoad = this.getCPULoad ? ensureFinite(this.getCPULoad(), 0.5, {
+			errorMessage: 'Invalid CPU load'
+		}) : 0.5;
+		const hardwareConcurrency = navigator.hardwareConcurrency || 4;
+		const deviceMemory = navigator.deviceMemory || 4;
+		const devicePerf = cpuLoad > 0.8 || hardwareConcurrency < 4 || deviceMemory < 4 ? 'low' :
+			cpuLoad > 0.6 || hardwareConcurrency < 8 ? 'medium' : 'high';
+		const qualityMode = this.qualityMode || (devicePerf === 'low' ? 'low' : 'high');
 
-        // Tính deviceAdaptFactor (HiFi AT2030)
-        const deviceAdaptFactor = Math.max(0.7, Math.min(1.0, 1.0 - (cpuLoad * 0.3) * (devicePerf === 'low' ? 0.5 : 0.2)));
+		// Analyze audio context
+		const fftAnalysis = this.getFFTAnalysis?.() || {};
+		const spectralProfile = this.spectralProfile || {
+			profile: 'smartStudio',
+			vocalPresence: 0.5,
+			transientEnergy: 0.5,
+			spectralFlux: 0.5,
+			bass: 0.5
+		};
+		const isVocalHeavy = fftAnalysis.vocalEnergy > 0.7 || spectralProfile.vocalPresence > 0.7 || false;
+		const transientDensity = fftAnalysis.transientDensity || spectralProfile.transientEnergy || 0.5;
+		const spectralFlux = spectralProfile.spectralFlux || 0.5;
 
-        // Analyze audio context
-        const fftAnalysis = this.getFFTAnalysis?.() || {};
-        const spectralProfile = this.spectralProfile || {
-            profile: 'smartStudio',
-            vocalPresence: 0.5,
-            transientEnergy: 0.5,
-            spectralFlux: 0.5,
-            spectralEntropy: 0.5,
-            harmonicRatio: 0.5,
-            bass: 0.5
-        };
-        const profile = this.context?.profile || spectralProfile.profile; // Lấy profile từ context
-        const listenerProfile = this.context?.listenerProfile || 'standard'; // Lấy listenerProfile từ HiFi AT2030
-        const isVocalHeavy = fftAnalysis.vocalEnergy > 0.7 || spectralProfile.vocalPresence > 0.7 || false;
-        const transientDensity = fftAnalysis.transientDensity || spectralProfile.transientEnergy || 0.5;
-        const spectralFlux = spectralProfile.spectralFlux || 0.5;
-        const spectralEntropy = spectralProfile.spectralEntropy || 0.5;
-        const harmonicRatio = spectralProfile.harmonicRatio || 0.5;
+		// Tích hợp userFeedback và songStructure
+		const feedbackList = this.memoryManager?.get('userFeedback') || [];
+		const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory) || {
+			semanticCategory: null
+		};
+		const isVocalFeedback = recentFeedback.semanticCategory === 'vocal';
+		const songStructure = this.memoryManager?.get('lastStructure') || {
+			section: 'unknown'
+		};
+		const isChorus = songStructure.section === 'chorus';
 
-        // Tích hợp userFeedback và songStructure
-        const feedbackList = this.memoryManager?.get('userFeedback') || [];
-        const recentFeedback = feedbackList.find(f => f.timestamp > Date.now() - 60000 && f.semanticCategory) || {
-            semanticCategory: null
-        };
-        const isVocalFeedback = recentFeedback.semanticCategory === 'vocal';
-        const isClarityFeedback = recentFeedback.semanticCategory === 'clarity';
-        const isBassFeedback = recentFeedback.semanticCategory === 'bass';
-        const songStructure = this.memoryManager?.get('lastStructure') || {
-            section: 'unknown'
-        };
-        const isChorus = songStructure.section === 'chorus';
+		// Manage processing history
+		let processingHistory = this.memoryManager?.get('processingHistory') || [];
+		if (!Array.isArray(processingHistory)) {
+			processingHistory = [];
+		}
+		const processingTime = performance.now() - (this.lastProcessingTime || performance.now());
+		processingHistory.push(processingTime);
+		processingHistory = processingHistory.slice(-10);
+		const avgProcessingTime = processingHistory.length > 0 ?
+			processingHistory.reduce((sum, val) => sum + val, 0) / processingHistory.length :
+			processingTime;
 
-        // Manage processing history
-        let processingHistory = this.memoryManager?.get('processingHistory') || [];
-        if (!Array.isArray(processingHistory)) {
-            processingHistory = [];
-        }
-        const processingTime = performance.now() - (this.lastProcessingTime || performance.now());
-        processingHistory.push(processingTime);
-        processingHistory = processingHistory.slice(-10);
-        const avgProcessingTime = processingHistory.length > 0 ?
-            processingHistory.reduce((sum, val) => sum + val, 0) / processingHistory.length :
-            processingTime;
+		this.memoryManager?.set('processingHistory', processingHistory, 'medium', {
+			timestamp: Date.now(),
+			expiry: Date.now() + 60000
+		});
+		this.lastProcessingTime = performance.now();
 
-        this.memoryManager?.set('processingHistory', processingHistory, 'medium', {
-            timestamp: Date.now(),
-            expiry: Date.now() + 60000
-        });
-        this.lastProcessingTime = performance.now();
+		// Check cached FFT settings
+		const cacheKey = this.generateCacheSignature?.('fftSize', {
+			spectralProfile,
+			songStructure: songStructure.section || 'unknown', // Fallback to avoid undefined
+			devicePerf,
+			cpuLoad
+		}) || `fftSize_${this.contextId}`;
+		const cachedSettings = this.memoryManager?.get(cacheKey);
+		if (cachedSettings?.timestamp > Date.now() - 10000) {
+			this._analyser.fftSize = cachedSettings.size;
+			this._analyser.smoothingTimeConstant = cachedSettings.smoothing;
+			this._analyser.minDecibels = cachedSettings.minDecibels;
+			this._analyser.maxDecibels = cachedSettings.maxDecibels;
+			if (isDebug) console.debug('Reused cached FFT settings', {
+				cacheKey,
+				cachedSettings
+			});
+			return;
+		}
 
-        // Check cached FFT settings
-        const cacheKey = this.generateCacheSignature?.('fftSize', {
-            spectralProfile,
-            songStructure: songStructure.section || 'unknown',
-            devicePerf,
-            cpuLoad,
-            profile,
-            listenerProfile
-        }) || `fftSize_${this.contextId}`;
-        const cachedSettings = this.memoryManager?.get(cacheKey);
-        if (cachedSettings?.timestamp > Date.now() - 10000) {
-            this._analyser.fftSize = cachedSettings.size;
-            this._analyser.smoothingTimeConstant = cachedSettings.smoothing;
-            this._analyser.minDecibels = cachedSettings.minDecibels;
-            this._analyser.maxDecibels = cachedSettings.maxDecibels;
-            if (isDebug) console.debug('Reused cached FFT settings', {
-                cacheKey,
-                cachedSettings
-            });
-            return;
-        }
+		// Adjust FFT size
+		let targetSize = size;
+		let enableCNNTransient = true;
+		let enableAdvancedDeEsser = true;
 
-        // Adjust FFT size
-        let targetSize = size;
-        let enableCNNTransient = true;
-        let enableAdvancedDeEsser = true;
+		if (avgProcessingTime > 16 || cpuLoad > 0.7) {
+			targetSize = avgProcessingTime > 30 || cpuLoad > 0.9 ? 512 : 1024;
+			enableCNNTransient = avgProcessingTime < 22 && cpuLoad < 0.8;
+			enableAdvancedDeEsser = avgProcessingTime < 20 && cpuLoad < 0.8;
+			if (isDebug) console.debug('High processing load detected:', {
+				avgProcessingTime: avgProcessingTime.toFixed(2),
+				cpuLoad: cpuLoad.toFixed(2),
+				targetSize,
+				enableCNNTransient,
+				enableAdvancedDeEsser
+			});
+		}
 
-        // Điều chỉnh theo profile và listenerProfile (HiFi AT2030)
-        const profileAdjust = {
-            warm: { fftSize: 2048, smoothing: 0.75, minDecibels: -90, maxDecibels: -25 },
-            bright: { fftSize: 4096, smoothing: 0.7, minDecibels: -95, maxDecibels: -20 },
-            bassHeavy: { fftSize: 1024, smoothing: 0.8, minDecibels: -85, maxDecibels: -30 },
-            vocal: { fftSize: 4096, smoothing: 0.65, minDecibels: -90, maxDecibels: -20 },
-            proNatural: { fftSize: 2048, smoothing: 0.75, minDecibels: -90, maxDecibels: -25 },
-            karaokeDynamic: { fftSize: 4096, smoothing: 0.65, minDecibels: -90, maxDecibels: -20 },
-            rockMetal: { fftSize: 2048, smoothing: 0.7, minDecibels: -85, maxDecibels: -25 },
-            smartStudio: { fftSize: 2048, smoothing: 0.7, minDecibels: -90, maxDecibels: -25 }
-        }[profile] || { fftSize: 2048, smoothing: 0.75, minDecibels: -90, maxDecibels: -25 };
-        const listenerAdjust = listenerProfile === 'audiophile' ? { fftSize: 1.5, smoothing: 0.9, decibels: 1.1 } :
-            listenerProfile === 'casual' ? { fftSize: 0.8, smoothing: 1.1, decibels: 0.9 } : { fftSize: 1.0, smoothing: 1.0, decibels: 1.0 };
+		// Adjust based on device performance and quality mode
+		if (devicePerf === 'low' || qualityMode === 'low') {
+			targetSize = Math.min(targetSize, 1024);
+		} else if (devicePerf === 'medium') {
+			targetSize = Math.min(targetSize, 4096);
+		} else if (qualityMode === 'high') {
+			targetSize = Math.max(targetSize, 2048);
+		}
 
-        if (avgProcessingTime > 16 || cpuLoad > 0.7) {
-            targetSize = avgProcessingTime > 30 || cpuLoad > 0.9 ? 512 : 1024;
-            enableCNNTransient = avgProcessingTime < 22 && cpuLoad < 0.8;
-            enableAdvancedDeEsser = avgProcessingTime < 20 && cpuLoad < 0.8;
-            if (isDebug) console.debug('High processing load detected:', {
-                avgProcessingTime: avgProcessingTime.toFixed(2),
-                cpuLoad: cpuLoad.toFixed(2),
-                targetSize,
-                enableCNNTransient,
-                enableAdvancedDeEsser
-            });
-        }
+		// Adjust based on audio context and spectralProfile
+		if (isVocalHeavy || isVocalFeedback || spectralProfile.profile === 'vocal' || spectralProfile.vocalPresence > 0.7) {
+			targetSize = Math.max(targetSize, 2048); // Ưu tiên chi tiết cho vocal
+		} else if (transientDensity > 0.65 || spectralFlux > 0.7 || spectralProfile.profile === 'bassHeavy' || spectralProfile.bass > 0.7) {
+			targetSize = Math.max(targetSize, 1024); // Tăng độ nhạy cho transient/bass
+		}
+		if (isChorus) {
+			targetSize = Math.max(targetSize, 2048); // Tăng chi tiết cho chorus
+		}
 
-        // Adjust based on device performance and quality mode
-        if (devicePerf === 'low' || qualityMode === 'low') {
-            targetSize = Math.min(targetSize, 1024 * listenerAdjust.fftSize);
-        } else if (devicePerf === 'medium') {
-            targetSize = Math.min(targetSize, 4096 * listenerAdjust.fftSize);
-        } else if (qualityMode === 'high') {
-            targetSize = Math.max(targetSize, 2048 * listenerAdjust.fftSize);
-        }
+		// Validate FFT size
+		if (!validSizes.includes(targetSize)) {
+			console.warn(`Invalid FFT size: ${targetSize}. Defaulting to ${isVocalHeavy || isChorus ? 2048 : 1024}.`);
+			targetSize = isVocalHeavy || isChorus ? 2048 : 1024;
+		}
 
-        // Adjust based on audio context, spectralProfile, and HiFi AT2030
-        if (isVocalHeavy || isVocalFeedback || profile === 'vocal' || profile === 'karaokeDynamic' || spectralProfile.vocalPresence > 0.7) {
-            targetSize = Math.max(targetSize, profileAdjust.fftSize * listenerAdjust.fftSize); // Ưu tiên chi tiết cho vocal
-            enableAdvancedDeEsser = true; // Luôn bật de-esser cho vocal
-        } else if (transientDensity > 0.65 || spectralFlux > 0.7 || profile === 'bassHeavy' || profile === 'rockMetal' || spectralProfile.bass > 0.7) {
-            targetSize = Math.max(targetSize, profileAdjust.fftSize * listenerAdjust.fftSize); // Tăng độ nhạy cho transient/bass
-            enableCNNTransient = true; // Ưu tiên transient cho bass
-        }
-        if (isChorus || isClarityFeedback) {
-            targetSize = Math.max(targetSize, profileAdjust.fftSize * listenerAdjust.fftSize); // Tăng chi tiết cho chorus
-        }
-        if (spectralEntropy > 0.7 || harmonicRatio > 0.7) {
-            targetSize = Math.max(targetSize, 2048 * listenerAdjust.fftSize); // Tăng chi tiết cho âm thanh phức tạp
-        }
+		// Optimize analyser settings
+		const smoothing = isVocalHeavy || isVocalFeedback ? 0.7 : 0.8;
+		const minDecibels = fftAnalysis.noiseLevel > 0.45 ? -90 : -100;
+		const maxDecibels = transientDensity > 0.65 || spectralFlux > 0.7 ? -20 : -30;
 
-        // Validate FFT size
-        if (!validSizes.includes(Math.round(targetSize))) {
-            console.warn(`Invalid FFT size: ${targetSize}. Defaulting to ${isVocalHeavy || isChorus ? 2048 : 1024}.`);
-            targetSize = isVocalHeavy || isChorus ? 2048 : 1024;
-        } else {
-            targetSize = validSizes.reduce((prev, curr) => Math.abs(curr - targetSize) < Math.abs(prev - targetSize) ? curr : prev);
-        }
+		this._analyser.fftSize = targetSize;
+		this._analyser.smoothingTimeConstant = Number.isFinite(smoothing) ? smoothing : 0.8;
+		this._analyser.minDecibels = Number.isFinite(minDecibels) ? minDecibels : -100;
+		this._analyser.maxDecibels = Number.isFinite(maxDecibels) ? maxDecibels : -30;
 
-        // Optimize analyser settings with HiFi AT2030
-        const smoothing = ensureFinite((isVocalHeavy || isVocalFeedback ? profileAdjust.smoothing : 0.8) * listenerAdjust.smoothing * deviceAdaptFactor, 0.8, {
-            errorMessage: 'Invalid smoothing'
-        });
-        const minDecibels = ensureFinite((fftAnalysis.noiseLevel > 0.45 ? profileAdjust.minDecibels : -100) * listenerAdjust.decibels, -100, {
-            errorMessage: 'Invalid minDecibels'
-        });
-        const maxDecibels = ensureFinite((transientDensity > 0.65 || spectralFlux > 0.7 ? profileAdjust.maxDecibels : -30) * listenerAdjust.decibels, -30, {
-            errorMessage: 'Invalid maxDecibels'
-        });
+		// Store settings in MemoryManager
+		const fftSettings = {
+			size: targetSize,
+			smoothing,
+			minDecibels,
+			maxDecibels,
+			enableCNNTransient,
+			enableAdvancedDeEsser,
+			timestamp: Date.now(),
+			expiry: Date.now() + 15000, // Extended expiry
+			priority: 'high'
+		};
+		this.memoryManager?.set(cacheKey, fftSettings, 'high');
+		this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
 
-        // Tích hợp PsychoacousticWeight và EmotionTimbreMap (HiFi AT2030)
-        const computePsychoacousticWeight = () => {
-            try {
-                const fftSize = Math.round(targetSize);
-                const psychoacousticWeight = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const fletcherMunson = (freq) => {
-                    if (freq < 20 || freq > 20000) return 0.1;
-                    if (freq < 200) return 0.8 - 0.002 * (200 - freq);
-                    if (freq < 4000) return 1.0 + 0.0001 * (freq - 200);
-                    return 1.0 - 0.00005 * (freq - 4000);
-                };
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    const maskingThreshold = Math.pow(10, minDecibels / 20) * fletcherMunson(freq);
-                    const perceptualSensitivity = listenerProfile === 'audiophile' ? 1.1 : listenerProfile === 'casual' ? 0.9 : 1.0;
-                    psychoacousticWeight[i] = ensureFinite(maskingThreshold * perceptualSensitivity * deviceAdaptFactor, 1.0);
-                }
-                return psychoacousticWeight;
-            } catch (error) {
-                handleError('PsychoacousticWeight computation failed', error, { fftSize: targetSize }, 'low', { memoryManager: this.memoryManager });
-                return new Float32Array(Math.round(targetSize) / 2).fill(1.0);
-            }
-        };
-
-        const computeEmotionTimbreMap = () => {
-            try {
-                const fftSize = Math.round(targetSize);
-                const timbreCurve = new Float32Array(fftSize / 2);
-                const freqStep = this.context.sampleRate / fftSize;
-                const splinePoints = {
-                    warm: { freq: [100, 1000, 4000], gain: [1.2, 1.1, 0.9] },
-                    bright: { freq: [1000, 4000, 8000], gain: [0.9, 1.0, 1.2] },
-                    bassHeavy: { freq: [50, 100, 200], gain: [1.3, 1.2, 1.0] },
-                    vocal: { freq: [200, 1000, 2000], gain: [1.0, 1.2, 1.1] },
-                    proNatural: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] },
-                    karaokeDynamic: { freq: [200, 1000, 2000], gain: [1.1, 1.3, 1.1] },
-                    rockMetal: { freq: [100, 4000, 8000], gain: [1.2, 1.0, 1.15] },
-                    smartStudio: { freq: [200, 2000, 4000], gain: [1.0, 1.1, 1.05] },
-                    neutral: { freq: [100, 1000, 4000], gain: [1.0, 1.0, 1.0] }
-                };
-                const profilePoints = splinePoints[profile] || splinePoints.neutral;
-                for (let i = 0; i < fftSize / 2; i++) {
-                    const freq = i * freqStep;
-                    let gain = 1.0;
-                    for (let j = 1; j < profilePoints.freq.length; j++) {
-                        if (freq >= profilePoints.freq[j - 1] && freq <= profilePoints.freq[j]) {
-                            const t = (freq - profilePoints.freq[j - 1]) / (profilePoints.freq[j] - profilePoints.freq[j - 1]);
-                            gain = (1 - t) * profilePoints.gain[j - 1] + t * profilePoints.gain[j];
-                        }
-                    }
-                    timbreCurve[i] = ensureFinite(gain * deviceAdaptFactor, 1.0);
-                }
-                return timbreCurve;
-            } catch (error) {
-                handleError('EmotionTimbreMap computation failed', error, { fftSize: targetSize }, 'low', { memoryManager: this.memoryManager });
-                return new Float32Array(Math.round(targetSize) / 2).fill(1.0);
-            }
-        };
-
-        // Áp dụng cài đặt
-        this._analyser.fftSize = Math.round(targetSize);
-        this._analyser.smoothingTimeConstant = smoothing;
-        this._analyser.minDecibels = minDecibels;
-        this._analyser.maxDecibels = maxDecibels;
-
-        // Lưu settings vào MemoryManager
-        const fftSettings = {
-            size: Math.round(targetSize),
-            smoothing,
-            minDecibels,
-            maxDecibels,
-            enableCNNTransient,
-            enableAdvancedDeEsser,
-            psychoacousticWeight: computePsychoacousticWeight().slice(0, 10), // Lưu mẫu
-            timbreCurve: computeEmotionTimbreMap().slice(0, 10), // Lưu mẫu
-            timestamp: Date.now(),
-            expiry: Date.now() + 15000, // Extended expiry
-            priority: 'high'
-        };
-        this.memoryManager?.set(cacheKey, fftSettings, 'high');
-        this.memoryManager?.pruneCache(this.calculateMaxCacheSize?.() || 100);
-
-        if (isDebug) console.debug('FFT Settings Applied:', {
-            size: targetSize,
-            smoothing,
-            minDecibels,
-            maxDecibels,
-            enableCNNTransient,
-            enableAdvancedDeEsser,
-            devicePerf,
-            qualityMode,
-            cpuLoad: cpuLoad.toFixed(2),
-            isVocalHeavy,
-            isVocalFeedback,
-            isClarityFeedback,
-            isBassFeedback,
-            transientDensity,
-            spectralFlux,
-            spectralEntropy,
-            harmonicRatio,
-            songStructure: songStructure.section || 'unknown',
-            profile,
-            listenerProfile,
-            avgProcessingTime: avgProcessingTime.toFixed(2),
-            cacheStats: this.memoryManager?.getCacheStats?.()
-        });
-    } catch (e) {
-        handleError('Error setting FFT size', e, {
-            requestedSize: size,
-            spectralProfile
-        }, 'high', {
-            memoryManager: this.memoryManager
-        });
-        if (this._analyser) {
-            const fallbackSize = isVocalHeavy || isChorus ? 2048 : 1024;
-            this._analyser.fftSize = fallbackSize;
-            this._analyser.smoothingTimeConstant = 0.8;
-            this._analyser.minDecibels = -100;
-            this._analyser.maxDecibels = -30;
-            if (isDebug) console.debug(`Recovered with fallback FFT size: ${fallbackSize}`);
-        }
-    }
+		if (isDebug) console.debug('FFT Settings Applied:', {
+			size: targetSize,
+			smoothing,
+			minDecibels,
+			maxDecibels,
+			enableCNNTransient,
+			enableAdvancedDeEsser,
+			devicePerf,
+			qualityMode,
+			cpuLoad: cpuLoad.toFixed(2),
+			isVocalHeavy,
+			isVocalFeedback,
+			transientDensity,
+			spectralFlux,
+			songStructure: songStructure.section || 'unknown',
+			avgProcessingTime: avgProcessingTime.toFixed(2),
+			cacheStats: this.memoryManager?.getCacheStats?.()
+		});
+	} catch (e) {
+		handleError('Error setting FFT size', e, {
+			requestedSize: size,
+			spectralProfile
+		}, 'high', {
+			memoryManager: this.memoryManager
+		});
+		if (this._analyser) {
+			const fallbackSize = isVocalHeavy || isChorus ? 2048 : 1024;
+			this._analyser.fftSize = fallbackSize;
+			this._analyser.smoothingTimeConstant = 0.8;
+			this._analyser.minDecibels = -100;
+			this._analyser.maxDecibels = -30;
+			if (isDebug) console.debug(`Recovered with fallback FFT size: ${fallbackSize}`);
+		}
+	}
 };
 
 // Helper function to check valid values
