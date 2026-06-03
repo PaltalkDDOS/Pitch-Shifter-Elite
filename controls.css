@@ -1,5 +1,14 @@
 /* controls.css - Styles cho Pitch Shifter Pro Popup */
-@import url('https://fonts.googleapis.com/css?family=Signika');
+/* Nhúng font Signika cục bộ */
+@font-face {
+    font-family: 'Signika';
+    src: url('../fonts/SignikaNegative-Regular.ttf') format('ttf'),
+         url('../fonts/SignikaNegative-Bold.ttf') format('ttf');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 /* NEW: Định nghĩa CSS variables cho màu sắc và kích thước */
 :root {
     --primary-color: #00bcd4;
@@ -442,18 +451,6 @@ h1 {
     100% { box-shadow: 0 0 5px var(--accent-color), 0 0 15px #ffa500, 0 0 25px #ff8c00; }
 }
 
-/* Author */
-.author {
-    text-align: center;
-    font-size: 10px;
-    color: #bbb;
-    margin-top: 5px;
-}
-
-[data-theme="light"] .author {
-    color: #666;
-}
-
 /* Modal Favorites */
 .modal {
     display: none;
@@ -516,8 +513,13 @@ h1 {
 }
 
 .table-container {
-    max-height: 180px;
+    max-height: 380px;        /* TĂNG TỪ 180 → 380 → HIỆN ~12-15 BÀI KHÔNG CẦN KÉO! */
+    min-height: 380px;        /* Đảm bảo luôn cao dù ít bài */
     overflow-y: auto;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.4); /* Nền mờ đẹp */
+    padding: 4px;             /* Thêm khoảng cách bên trong */
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
 }
 
 table {
@@ -1252,4 +1254,124 @@ table td {
 
 #favorites-modal input#search-favorites {
     margin-bottom: 10px;
+}
+/* Author */
+.author {
+    display: inline-block; /* Chỉ chiếm đúng kích thước nội dung */
+    font-size: 10px;
+    color: #bbb;
+    margin-top: 5px;
+    cursor: pointer;
+    transition: color 0.2s ease, text-shadow 0.2s ease;
+    text-align: center;
+    padding: 0; /* Xóa padding nếu có */
+    margin-left: auto;
+    margin-right: auto;
+    white-space: nowrap; /* Ngăn chữ bị xuống dòng */
+}
+
+[data-theme="light"] .author {
+    color: #666;
+}
+
+.author:hover {
+    color: #fff; /* Sáng hơn khi hover trong theme dark */
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.5); /* Hiệu ứng sáng nhẹ */
+}
+
+[data-theme="light"] .author:hover {
+    color: #333; /* Đậm hơn khi hover trong theme light */
+    text-shadow: 0 0 5px rgba(0, 0, 0, 0.3); /* Hiệu ứng sáng nhẹ */
+}
+
+/* Email trong author modal */
+#author-message a {
+    color: #00FFFF; /* Màu cyan sáng cho theme dark */
+    text-decoration: none; /* Không gạch chân mặc định */
+    transition: color 0.2s ease, text-decoration 0.2s ease;
+}
+
+[data-theme="light"] #author-message a {
+    color: #00A1D6; /* Xanh ngọc nhạt cho theme light, nổi bật và hài hòa */
+}
+
+#author-message a:hover {
+    color: #00ff00; /* Màu xanh neon khi hover trong theme dark */
+    text-decoration: underline; /* Gạch chân khi hover */
+}
+
+[data-theme="light"] #author-message a:hover {
+    color: #00C4E0; /* Xanh ngọc sáng hơn khi hover trong theme light */
+}
+/* CĂN GIỮA KHUNG SELECT GIỮA "Pitch:" và "0" – HOÀN HẢO BẰNG GRID */
+.label-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr; /* 3 cột: trái - giữa - phải */
+    align-items: center;
+    gap: 8px;
+}
+
+.label-row label {
+    grid-column: 1;
+    text-align: left;
+    justify-self: start;
+}
+
+.label-row select {
+    grid-column: 2;
+    justify-self: center;
+    width: 90px;
+    min-width: 80px;
+}
+.delete-fav-btn {
+    padding: 3px 8px;
+    border: none;
+    border-radius: 3px;
+    background: #f44336;
+    color: #fff;
+    cursor: pointer;
+    font-size: 11px;
+    min-width: 48px;
+    height: 22px;
+    transition: background 0.2s;
+}
+.delete-fav-btn:hover { background: #da190b; }
+/* DOWNLOAD COVER – GIỮ IM LẶNG MẢNH MAI, CHỈ THÊM HIỆU ỨNG HOVER TINH TẾ RIÊNG CHO 2 THEME */
+.download-cover-container {
+    position: absolute;
+    bottom: 10px;                /* Sát đáy */
+    left: 12px;                  /* Góc trái */
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.download-cover-btn {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 10.5px;           /* Mảnh mai giống VN (Paltalk) */
+    color: #bbb;
+    font-weight: normal;
+    cursor: pointer;
+    text-shadow: none;
+    transition: color 0.4s ease, text-shadow 0.4s ease;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+[data-theme="light"] .download-cover-btn {
+    color: #666;
+}
+
+/* Hover tinh tế – chỉ sáng/glow nhẹ, không bay, không giãn chữ */
+.download-cover-btn:hover {
+    color: #fff;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+}
+
+[data-theme="light"] .download-cover-btn:hover {
+    color: #000;
+    text-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
 }
